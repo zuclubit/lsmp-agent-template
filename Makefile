@@ -4,7 +4,7 @@
 # =============================================================================
 
 .PHONY: help setup install start stop restart logs \
-        seed seed-legacy migrate mock-sf dashboard \
+        seed seed-legacy migrate mock-sf dashboard live \
         sf-setup sf-deploy sf-deploy-dry sf-open \
         validate test test-unit test-security test-integration \
         clean clean-data status
@@ -158,6 +158,10 @@ mock-sf: ## Start local mock Salesforce API server (port 9001)
 dashboard: ## Start local migration control dashboard (http://localhost:8080)
 	@echo "$(BOLD)▶ Starting LSMP Dashboard on http://localhost:8080$(RESET)"
 	@$(PYTHON) dashboard/app.py
+
+live: ## 🚀 LIVE MODE — start all services + open browser (dashboard+mock-SF+API)
+	@echo "$(BOLD)$(GREEN)▶ LSMP Live Mode — launching all services$(RESET)"
+	@$(PYTHON) live.py
 
 ## ─── MIGRATION ───────────────────────────────────────────────────────────────
 

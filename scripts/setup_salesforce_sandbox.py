@@ -45,13 +45,24 @@ def main():
     # ── 1. Check SFDX CLI ──────────────────────────────────────────────────
     h("Step 1 — Salesforce CLI")
     sf_cmd = None
-    for cmd in ["sf", "sfdx"]:
-        rc, out, _ = run(f"{cmd} version --json 2>/dev/null")
-        if rc == 0:
+    # Try common install locations in addition to PATH
+    candidates = ["sf", "sfdx",
+                  "/opt/homebrew/bin/sf", "/opt/homebrew/bin/sfdx",
+                  "/usr/local/bin/sf",    "/usr/local/bin/sfdx"]
+    for cmd in candidates:
+        rc, out, err = run(f"{cmd} version 2>/dev/null")
+        if rc == 0 and out:
+            sf_cmd = cmd
+            ver = out.split("\n")[0].strip()
+            ok(f"Salesforce CLI found: {cmd} — {ver}")
+            break
+        # also try --json variant
+        rc2, out2, _ = run(f"{cmd} version --json 2>/dev/null")
+        if rc2 == 0 and out2:
             sf_cmd = cmd
             try:
-                data = json.loads(out)
-                ver = data.get("sfdxCLIVersion") or data.get("version", "?")
+                data = json.loads(out2)
+                ver = data.get("sfdxCLIVersion") or data.get("version", "installed")
             except Exception:
                 ver = "installed"
             ok(f"Salesforce CLI found: {cmd} ({ver})")
