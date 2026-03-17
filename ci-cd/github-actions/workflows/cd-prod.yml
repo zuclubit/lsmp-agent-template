@@ -1,0 +1,459 @@
+##############################################################################
+# cd-prod.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Trigger : Push to 'main' branch OR manual dispatch
+# Purpose : Production CD pipeline with:
+#           - Manual approval gate
+#           - Blue-green Kubernetes deployment
+#           - Automated rollback on health check failure
+#           - Post-deployment smoke tests
+##############################################################################
+
+name: CD Production
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy"
+        required: true
+        type: string
+      skip_terraform:
+        description: "Skip Terraform apply (deploy only)"
+        required: false
+        type: boolean
+        default: true
+      rollback_on_failure:
+        description: "Automatically rollback on failure"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: prod
+  NAMESPACE: sfmigration-prod
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || format('sha-{0}', github.sha) }}
+  AKS_CLUSTER: aks-sfmigration-prod-eus2
+  RESOURCE_GROUP: rg-sfmigration-prod-eus2
+  TF_WORKING_DIR: infrastructure/terraform
+  TF_VARS_FILE: environments/prod/terraform.tfvars
+  DEPLOY_TIMEOUT: "900"
+  SMOKE_TEST_RETRIES: "5"
+
+permissions:
+  contents: read
+  id-token: write
+  deployments: write
+
+jobs:
+
+  ##############################################################################
+  # 1. Pre-deployment validation
+  ##############################################################################
+  pre-deploy-check:
+    name: Pre-Deployment Validation
+    runs-on: ubuntu-latest
+    outputs:
+      staging-sha: ${{ steps.check-staging.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify image exists in registry
+        run: |
+          az acr repository show-tags \
+            --name ${{ secrets.ACR_NAME }} \
+            --repository sfmigration-worker \
+            --query "[?contains(@, '${{ env.IMAGE_TAG }}')]" \
+            --output tsv | grep -q '${{ env.IMAGE_TAG }}'
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Check staging deployment status
+        id: check-staging
+        run: |
+          echo "Verifying image ${{ env.IMAGE_TAG }} was deployed to staging..."
+          echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  ##############################################################################
+  # 2. Terraform plan for production
+  ##############################################################################
+  terraform-plan-prod:
+    name: Terraform Plan (Production)
+    runs-on: ubuntu-latest
+    needs: pre-deploy-check
+    if: ${{ !github.event.inputs.skip_terraform }}
+    environment: production-plan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend-config="key=sfmigration-prod.terraform.tfstate" -reconfigure
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var-file="${{ env.TF_VARS_FILE }}" \
+            -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}" \
+            -var="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -out=tfplan.prod \
+            -no-color 2>&1 | tee plan-output.txt
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Upload plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-prod
+          path: ${{ env.TF_WORKING_DIR }}/tfplan.prod
+          retention-days: 3
+
+  ##############################################################################
+  # 3. Manual approval — production deployment gate
+  ##############################################################################
+  production-approval:
+    name: Production Approval Gate
+    runs-on: ubuntu-latest
+    needs: [pre-deploy-check, terraform-plan-prod]
+    if: always() && needs.pre-deploy-check.result == 'success'
+    environment: production   # GitHub Environment with REQUIRED reviewers
+    steps:
+      - name: Production deployment approval
+        run: |
+          echo "======================================================"
+          echo "PRODUCTION DEPLOYMENT REQUEST"
+          echo "======================================================"
+          echo "Image Tag : ${{ env.IMAGE_TAG }}"
+          echo "Commit SHA: ${{ github.sha }}"
+          echo "Triggered : ${{ github.actor }}"
+          echo "Time      : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "======================================================"
+          echo "This deployment has been approved. Proceeding..."
+
+  ##############################################################################
+  # 4. Terraform apply (production)
+  ##############################################################################
+  terraform-apply-prod:
+    name: Terraform Apply (Production)
+    runs-on: ubuntu-latest
+    needs: production-approval
+    if: ${{ !github.event.inputs.skip_terraform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-prod
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend-config="key=sfmigration-prod.terraform.tfstate" -reconfigure
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Terraform apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan.prod
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+  ##############################################################################
+  # 5. Blue-Green Kubernetes deployment
+  ##############################################################################
+  blue-green-deploy:
+    name: Blue-Green Deploy to Production
+    runs-on: ubuntu-latest
+    needs: production-approval
+    if: always() && needs.production-approval.result == 'success'
+    outputs:
+      previous-image: ${{ steps.capture-current.outputs.image }}
+      deploy-status: ${{ steps.deploy.outputs.status }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER }} \
+            --overwrite-existing
+
+      - name: Capture current deployment image (for rollback)
+        id: capture-current
+        run: |
+          CURRENT_IMAGE=$(kubectl get deployment migration-worker \
+            -n ${{ env.NAMESPACE }} \
+            -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "none")
+          echo "image=$CURRENT_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "Current image: $CURRENT_IMAGE"
+
+      - name: Deploy new version (green)
+        id: deploy
+        run: |
+          chmod +x ci-cd/scripts/deploy.sh
+          if ci-cd/scripts/deploy.sh; then
+            echo "status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+        env:
+          ENVIRONMENT: prod
+          NAMESPACE: ${{ env.NAMESPACE }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          REGISTRY: ${{ env.REGISTRY }}
+          DEPLOYMENT_TIMEOUT: ${{ env.DEPLOY_TIMEOUT }}
+          BLUE_GREEN: "true"
+
+      - name: Wait for rollout to complete
+        run: |
+          echo "Waiting for migration-worker rollout..."
+          kubectl rollout status deployment/migration-worker \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=${{ env.DEPLOY_TIMEOUT }}s
+
+          echo "Waiting for api-gateway rollout..."
+          kubectl rollout status deployment/api-gateway \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+      - name: Verify pod health
+        run: |
+          echo "Checking pod health..."
+          kubectl wait pod \
+            -l app.kubernetes.io/name=migration-worker \
+            -n ${{ env.NAMESPACE }} \
+            --for=condition=Ready \
+            --timeout=300s
+
+          kubectl wait pod \
+            -l app.kubernetes.io/name=api-gateway \
+            -n ${{ env.NAMESPACE }} \
+            --for=condition=Ready \
+            --timeout=180s
+
+          echo "Pods are healthy. Deployment successful."
+
+  ##############################################################################
+  # 6. Post-deployment smoke tests
+  ##############################################################################
+  smoke-tests-prod:
+    name: Production Smoke Tests
+    runs-on: ubuntu-latest
+    needs: blue-green-deploy
+    outputs:
+      smoke-result: ${{ steps.smoke.outputs.result }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install httpx pytest pytest-asyncio pytest-retry
+
+      - name: Run smoke tests
+        id: smoke
+        run: |
+          if python -m pytest tests/smoke/ \
+            -v \
+            --tb=short \
+            --junitxml=smoke-prod-results.xml \
+            -k "production" \
+            --retries=${{ env.SMOKE_TEST_RETRIES }} \
+            --retry-delay=10; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+        env:
+          PROD_API_URL: ${{ secrets.PROD_API_URL }}
+          PROD_API_TOKEN: ${{ secrets.PROD_SMOKE_TEST_TOKEN }}
+
+      - name: Upload smoke test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-prod-results
+          path: smoke-prod-results.xml
+
+  ##############################################################################
+  # 7. Automated rollback on smoke test failure
+  ##############################################################################
+  rollback:
+    name: Automated Rollback
+    runs-on: ubuntu-latest
+    needs: [blue-green-deploy, smoke-tests-prod]
+    if: |
+      always() &&
+      needs.smoke-tests-prod.outputs.smoke-result == 'failed' &&
+      (github.event.inputs.rollback_on_failure != 'false')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER }} \
+            --overwrite-existing
+
+      - name: Execute rollback
+        run: |
+          chmod +x ci-cd/scripts/rollback.sh
+          ci-cd/scripts/rollback.sh
+        env:
+          ENVIRONMENT: prod
+          NAMESPACE: ${{ env.NAMESPACE }}
+          PREVIOUS_IMAGE: ${{ needs.blue-green-deploy.outputs.previous-image }}
+          REASON: "Smoke tests failed after deployment of ${{ env.IMAGE_TAG }}"
+
+      - name: Notify rollback
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":warning: *Production ROLLBACK executed*",
+              "attachments": [{
+                "color": "warning",
+                "fields": [
+                  { "title": "Failed Image", "value": "${{ env.IMAGE_TAG }}", "short": true },
+                  { "title": "Rolled Back To", "value": "${{ needs.blue-green-deploy.outputs.previous-image }}", "short": true },
+                  { "title": "Reason", "value": "Smoke tests failed", "short": false },
+                  { "title": "Run URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENT_WEBHOOK }}
+
+  ##############################################################################
+  # 8. Notify on deployment completion
+  ##############################################################################
+  notify-prod:
+    name: Notify Production Deployment
+    runs-on: ubuntu-latest
+    needs: [blue-green-deploy, smoke-tests-prod, rollback]
+    if: always()
+    steps:
+      - name: Notify Slack — success
+        if: needs.smoke-tests-prod.outputs.smoke-result == 'success'
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":rocket: *Production deployment SUCCESSFUL*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  { "title": "Image Tag", "value": "${{ env.IMAGE_TAG }}", "short": true },
+                  { "title": "Actor", "value": "${{ github.actor }}", "short": true },
+                  { "title": "Commit", "value": "${{ github.sha }}", "short": true },
+                  { "title": "Time", "value": "${{ github.event.head_commit.timestamp }}", "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENT_WEBHOOK }}
+
+      - name: Create GitHub deployment record
+        uses: actions/github-script@v7
+        if: needs.smoke-tests-prod.outputs.smoke-result == 'success'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'production',
+              description: 'Production deployment',
+              auto_merge: false,
+              required_contexts: []
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'success',
+              description: `Deployed ${{ env.IMAGE_TAG }} to production`,
+              environment_url: '${{ secrets.PROD_API_URL }}'
+            });

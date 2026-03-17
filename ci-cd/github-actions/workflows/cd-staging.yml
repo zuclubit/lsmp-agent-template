@@ -1,0 +1,330 @@
+##############################################################################
+# cd-staging.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Trigger : Push to 'develop' branch OR manual dispatch
+# Purpose : Continuous Deployment to Staging environment
+#           Stages: terraform plan → approval gate → terraform apply →
+#                   k8s deploy → smoke tests → notify
+##############################################################################
+
+name: CD Staging
+
+on:
+  push:
+    branches:
+      - develop
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy (default: sha-<latest>)"
+        required: false
+        type: string
+      skip_terraform:
+        description: "Skip Terraform apply (deploy only)"
+        required: false
+        type: boolean
+        default: false
+      force_deploy:
+        description: "Force deploy even if smoke tests fail"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-staging
+  cancel-in-progress: false   # Never cancel an in-flight staging deployment
+
+env:
+  ENVIRONMENT: staging
+  NAMESPACE: sfmigration-staging
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || format('sha-{0}', github.sha) }}
+  AKS_CLUSTER: aks-sfmigration-staging-eus2
+  RESOURCE_GROUP: rg-sfmigration-staging-eus2
+  TF_WORKING_DIR: infrastructure/terraform
+  TF_VARS_FILE: environments/staging/terraform.tfvars
+
+permissions:
+  contents: read
+  id-token: write
+  deployments: write
+
+jobs:
+
+  ##############################################################################
+  # 1. Terraform plan
+  ##############################################################################
+  terraform-plan:
+    name: Terraform Plan (Staging)
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.inputs.skip_terraform }}
+    environment: staging-plan
+    outputs:
+      plan-exit-code: ${{ steps.plan.outputs.exitcode }}
+      plan-summary: ${{ steps.plan-summary.outputs.summary }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+          terraform_wrapper: true
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform init \
+            -backend-config="key=sfmigration-staging.terraform.tfstate" \
+            -reconfigure
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var-file="${{ env.TF_VARS_FILE }}" \
+            -var="subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}" \
+            -var="tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -out=tfplan.staging \
+            -detailed-exitcode \
+            -no-color 2>&1 | tee plan-output.txt
+          echo "exitcode=$?" >> "$GITHUB_OUTPUT"
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+        continue-on-error: true
+
+      - name: Generate plan summary
+        id: plan-summary
+        run: |
+          SUMMARY=$(grep -E '(Plan:|No changes)' plan-output.txt || echo "Plan output not parseable")
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-staging
+          path: ${{ env.TF_WORKING_DIR }}/tfplan.staging
+          retention-days: 7
+
+  ##############################################################################
+  # 2. Approval gate (required reviewer must approve)
+  ##############################################################################
+  approval:
+    name: Approval Gate
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    environment: staging    # GitHub Environment with required reviewers configured
+    steps:
+      - name: Display plan summary
+        run: |
+          echo "Terraform Plan Summary: ${{ needs.terraform-plan.outputs.plan-summary }}"
+          echo "Proceeding with staging deployment..."
+
+  ##############################################################################
+  # 3. Terraform apply
+  ##############################################################################
+  terraform-apply:
+    name: Terraform Apply (Staging)
+    runs-on: ubuntu-latest
+    needs: [terraform-plan, approval]
+    if: ${{ !github.event.inputs.skip_terraform && needs.terraform-plan.outputs.plan-exit-code != '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Download Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-staging
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -backend-config="key=sfmigration-staging.terraform.tfstate" -reconfigure
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+      - name: Terraform apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan.staging
+        env:
+          ARM_USE_OIDC: true
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+  ##############################################################################
+  # 4. Kubernetes deployment
+  ##############################################################################
+  k8s-deploy:
+    name: Deploy to Staging AKS
+    runs-on: ubuntu-latest
+    needs: [approval, terraform-apply]
+    if: always() && needs.approval.result == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_STAGING }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER }} \
+            --overwrite-existing
+
+      - name: Deploy to staging via script
+        run: |
+          chmod +x ci-cd/scripts/deploy.sh
+          ci-cd/scripts/deploy.sh
+        env:
+          ENVIRONMENT: staging
+          NAMESPACE: ${{ env.NAMESPACE }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          REGISTRY: ${{ env.REGISTRY }}
+          DEPLOYMENT_TIMEOUT: "600"
+
+      - name: Verify rollout (migration worker)
+        run: |
+          kubectl rollout status deployment/migration-worker \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=600s
+
+      - name: Verify rollout (API gateway)
+        run: |
+          kubectl rollout status deployment/api-gateway \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+  ##############################################################################
+  # 5. Smoke tests
+  ##############################################################################
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    needs: k8s-deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install httpx pytest pytest-asyncio
+
+      - name: Run smoke tests
+        run: |
+          python -m pytest tests/smoke/ \
+            -v \
+            --tb=short \
+            --junitxml=smoke-results.xml \
+            -k "staging"
+        env:
+          STAGING_API_URL: ${{ secrets.STAGING_API_URL }}
+          STAGING_API_TOKEN: ${{ secrets.STAGING_SMOKE_TEST_TOKEN }}
+        continue-on-error: ${{ github.event.inputs.force_deploy == 'true' }}
+
+      - name: Upload smoke test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-results
+          path: smoke-results.xml
+
+  ##############################################################################
+  # 6. Notify on success / failure
+  ##############################################################################
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [k8s-deploy, smoke-tests]
+    if: always()
+    steps:
+      - name: Notify Slack on success
+        if: needs.smoke-tests.result == 'success'
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: *Staging deployment successful*",
+              "attachments": [{
+                "color": "good",
+                "fields": [
+                  { "title": "Repository", "value": "${{ github.repository }}", "short": true },
+                  { "title": "Image Tag", "value": "${{ env.IMAGE_TAG }}", "short": true },
+                  { "title": "Actor", "value": "${{ github.actor }}", "short": true },
+                  { "title": "Commit", "value": "${{ github.sha }}", "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENT_WEBHOOK }}
+
+      - name: Notify Slack on failure
+        if: needs.k8s-deploy.result == 'failure' || needs.smoke-tests.result == 'failure'
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":x: *Staging deployment FAILED*",
+              "attachments": [{
+                "color": "danger",
+                "fields": [
+                  { "title": "Repository", "value": "${{ github.repository }}", "short": true },
+                  { "title": "Image Tag", "value": "${{ env.IMAGE_TAG }}", "short": true },
+                  { "title": "Actor", "value": "${{ github.actor }}", "short": true },
+                  { "title": "Run URL", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_DEPLOYMENT_WEBHOOK }}

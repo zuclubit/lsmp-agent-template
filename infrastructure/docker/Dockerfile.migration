@@ -1,0 +1,114 @@
+# =============================================================================
+# Dockerfile.migration
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Multi-stage build for the Python-based migration service
+# Base    : Python 3.12 slim (Debian Bookworm)
+# =============================================================================
+
+# ---- Stage 1: dependency resolver ----------------------------------------
+FROM python:3.12-slim-bookworm AS dependency-resolver
+
+# Install build dependencies required for native Python extensions
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libpq-dev \
+        libssl-dev \
+        libffi-dev \
+        curl \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy only requirements to leverage layer caching
+COPY requirements.txt requirements-migration.txt ./
+
+RUN pip install --upgrade pip==24.0 pip-tools && \
+    pip install --no-cache-dir --prefix=/install \
+        -r requirements.txt \
+        -r requirements-migration.txt
+
+# ---- Stage 2: security scanner (Trivy) ------------------------------------
+FROM aquasec/trivy:0.50.1 AS trivy-scanner
+COPY --from=dependency-resolver /install /install
+RUN trivy fs --exit-code 1 \
+             --severity HIGH,CRITICAL \
+             --no-progress \
+             /install 2>&1 || echo "Trivy scan completed (non-blocking in image build)"
+
+# ---- Stage 3: final runtime image ----------------------------------------
+FROM python:3.12-slim-bookworm AS runtime
+
+# Metadata labels (OCI spec)
+LABEL org.opencontainers.image.title="sf-migration-service" \
+      org.opencontainers.image.description="Legacy-to-Salesforce data migration worker" \
+      org.opencontainers.image.vendor="Company Engineering" \
+      org.opencontainers.image.version="${BUILD_VERSION:-dev}" \
+      org.opencontainers.image.revision="${GIT_COMMIT:-unknown}" \
+      org.opencontainers.image.created="${BUILD_DATE:-unknown}" \
+      org.opencontainers.image.source="https://github.com/company/s-agent"
+
+ARG BUILD_VERSION=dev
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
+    PATH="/home/migrationuser/.local/bin:/install/bin:${PATH}" \
+    PYTHONPATH="/app" \
+    APP_VERSION="${BUILD_VERSION}" \
+    APP_GIT_COMMIT="${GIT_COMMIT}"
+
+# Install only runtime system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libpq5 \
+        libssl3 \
+        ca-certificates \
+        curl \
+        tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get purge -y --auto-remove \
+    # Remove SUID bits from system binaries for security hardening
+    && find / -perm /4000 -type f -exec chmod a-s {} + 2>/dev/null || true
+
+# Create non-root user and group
+RUN groupadd --gid 10001 migrationgroup && \
+    useradd  --uid 10001 \
+             --gid migrationgroup \
+             --no-create-home \
+             --shell /usr/sbin/nologin \
+             migrationuser && \
+    mkdir -p /app /app/logs /app/tmp /app/data && \
+    chown -R 10001:10001 /app
+
+# Copy Python dependencies from builder stage
+COPY --from=dependency-resolver --chown=10001:10001 /install /usr/local
+
+WORKDIR /app
+
+# Copy application source
+COPY --chown=10001:10001 src/migration/ ./migration/
+COPY --chown=10001:10001 src/shared/    ./shared/
+COPY --chown=10001:10001 src/config/    ./config/
+
+# Drop to non-root user
+USER 10001:10001
+
+# Expose health check port
+EXPOSE 8080
+
+# Healthcheck: poll the /health endpoint
+HEALTHCHECK --interval=30s \
+            --timeout=10s \
+            --start-period=60s \
+            --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Use tini as PID 1 for proper signal handling
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["python", "-m", "migration.worker", "--config", "/app/config/migration.yaml"]

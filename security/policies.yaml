@@ -1,0 +1,56 @@
+version: "1.0.0"
+# =======================================================
+# Agent Security Policies — Migration Platform
+# =======================================================
+# This file is the single source of truth for runtime security policy enforcement.
+# It is read by:
+#   - monitoring/agent_observability.py  (gate enforcement)
+#   - agents/*/tools.py                  (tool dispatch layer)
+#   - security/audit/audit_logger.py     (audit requirements)
+#
+# CHANGES REQUIRE:
+#   1. Peer review by Platform Security Team
+#   2. CISO sign-off for data_access, gate_enforcement, sox_compliance sections
+#   3. Re-run of all tests in tests/agent-tests/ before merge
+
+policies:
+  agent_execution:
+    require_request_context: true
+    max_concurrent_agents_per_tenant: 5
+    max_tool_calls_per_session: 100
+    require_trace_id: true
+
+  data_access:
+    pii_in_prompts: FORBIDDEN
+    raw_sf_credentials_in_prompts: FORBIDDEN
+    log_level_for_agent_outputs: INFO  # never DEBUG in prod (may expose data)
+
+  tool_permissions:
+    file_system_tool:
+      write: FORBIDDEN
+      read: WHITELISTED_PATHS_ONLY
+    api_client_tool:
+      allowed_services:
+        - salesforce
+        - migration-api
+        - kafka-connect
+        - prometheus
+      require_circuit_breaker: true
+    validation_tool:
+      allowed_operations: [SELECT_ONLY]
+      sql_injection_check: MANDATORY
+
+  gate_enforcement:
+    validation_gate_BLOCK_stops_pipeline: true
+    security_gate_CRITICAL_stops_pipeline: true
+    human_confirmation_for:
+      - rollback
+      - force_pause_all
+      - delete_bulk_job
+
+  sox_compliance:
+    financial_tenant_error_threshold: 0.02  # 2% error rate triggers SOX notification
+    require_dual_authorization_for:
+      - rollback
+      - force_complete
+    audit_trail_retention_years: 7

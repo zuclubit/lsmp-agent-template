@@ -1,0 +1,248 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# migration_config.yaml
+# Full configuration for the Legacy → Salesforce migration pipeline.
+#
+# IMPORTANT: Never commit real credentials. Use environment variable
+#            substitution (e.g., ${SF_PASSWORD}) and store secrets in
+#            Vault, AWS Secrets Manager, or Airflow Connections.
+#
+# Author  : Migration Platform Team
+# Modified: 2026-03-16
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─── Project Metadata ─────────────────────────────────────────────────────────
+project:
+  name:          "Legacy-to-Salesforce Migration"
+  version:       "1.0.0"
+  client:        "Acme Corporation"
+  environment:   "staging"          # dev | staging | production
+  run_id_prefix: "MIGRATION"
+
+# ─── Source Database ──────────────────────────────────────────────────────────
+source_database:
+  # SQLAlchemy connection URL — override via SF_LEGACY_DB_URL env var
+  url: "${SF_LEGACY_DB_URL}"
+
+  # Alternatively, build URL from components:
+  driver:   "mssql+pyodbc"
+  host:     "${LEGACY_DB_HOST}"
+  port:     1433
+  database: "LegacyDB"
+  username: "${LEGACY_DB_USER}"
+  password: "${LEGACY_DB_PASSWORD}"
+  schema:   "dbo"
+
+  # Connection pool settings
+  pool_size:    5
+  max_overflow: 2
+  pool_timeout: 30
+  pool_recycle: 3600
+
+  # ODBC driver (MSSQL-specific)
+  odbc_driver:       "ODBC Driver 18 for SQL Server"
+  encrypt:           true
+  trust_server_cert: false
+  connection_timeout: 30
+
+  # Tables
+  tables:
+    accounts:   "dbo.COMPANY_MASTER"
+    contacts:   "dbo.PERSON_MASTER"
+    contact_detail: "dbo.PERSON_CONTACT_DETAIL"
+    activities: "dbo.ACTIVITY_LOG"
+    products:   "dbo.PRODUCT_CATALOG"
+
+# ─── Salesforce Target ────────────────────────────────────────────────────────
+salesforce:
+  instance_url:       "https://mycompany--staging.sandbox.my.salesforce.com"
+  username:           "${SF_USERNAME}"
+  password:           "${SF_PASSWORD}"
+  security_token:     "${SF_SECURITY_TOKEN}"
+  consumer_key:       "${SF_CONSUMER_KEY}"       # For OAuth2 (optional)
+  consumer_secret:    "${SF_CONSUMER_SECRET}"
+  is_sandbox:         true
+  api_version:        "59.0"
+  notification_email: "migration-ops@company.com"
+
+  # Named credentials (used in Apex)
+  named_credentials:
+    legacy_api:       "Legacy_System_API"
+    data_lake:        "Data_Lake_API"
+    address_validation: "Address_Validation_API"
+
+  # Governor limit thresholds (abort if approaching)
+  api_daily_limit_warning_pct: 80
+  bulk_api_daily_calls_limit:  10000
+
+# ─── Pipeline Configuration ───────────────────────────────────────────────────
+pipeline:
+  working_dir: "/data/migration/runs"
+
+  # ── Extract ──────────────────────────────────────────────────────────────
+  extract:
+    page_size:           5000
+    active_only:         true
+    resume_on_failure:   true
+    mask_pii:            true          # Set false in production
+    incremental_mode:    false         # Set true for delta loads
+    incremental_since:   null          # YYYY-MM-DD, null = full load
+    max_retries:         3
+    retry_delay_seconds: 5.0
+
+    # Parallelism (number of concurrent extractor workers)
+    concurrency: 2
+
+    # Objects to extract (ordered by dependency)
+    objects:
+      - name: "Account"
+        table: "dbo.COMPANY_MASTER"
+        enabled: true
+        priority: 1
+      - name: "Contact"
+        table: "dbo.PERSON_MASTER"
+        enabled: true
+        priority: 2
+        depends_on: ["Account"]
+      - name: "Opportunity"
+        table: "dbo.DEAL_MASTER"
+        enabled: false        # Not in scope for phase 1
+        priority: 3
+        depends_on: ["Account", "Contact"]
+
+  # ── Transform ─────────────────────────────────────────────────────────────
+  transform:
+    dry_run: false
+    country_code: "1"          # Default phone country code
+
+    # Data quality thresholds (fail transform if below)
+    min_completeness_pct:     95.0
+    max_violation_pct:        5.0
+    max_dedup_loss_pct:       1.0
+
+    # Field length limits (truncate if exceeded)
+    field_max_lengths:
+      Name:            255
+      Phone:           40
+      Email:           80
+      Website:         255
+      Description:     32000
+      BillingStreet:   255
+      BillingCity:     40
+      BillingState:    80
+      BillingPostalCode: 20
+
+  # ── Load ──────────────────────────────────────────────────────────────────
+  load:
+    operation:           "upsert"       # insert | update | upsert | delete
+    external_id_field:   "Legacy_ID__c"
+    batch_size:          10000          # Records per Bulk API 2.0 batch
+    job_size:            50000          # Records per Bulk API 2.0 job
+    max_failures_pct:    5.0            # Abort if failure rate exceeds this
+    poll_interval_sec:   5
+    max_poll_minutes:    30
+
+    # Retry policy
+    max_retries:         5
+    base_delay_sec:      2.0
+    max_delay_sec:       120.0
+    backoff_factor:      2.0
+    retryable_http_codes: [429, 500, 502, 503, 504]
+
+  # ── Validate ──────────────────────────────────────────────────────────────
+  validate:
+    count_tolerance_pct:     0.5        # Acceptable count diff %
+    checksum_sample_size:    500        # Records to spot-check
+    referential_integrity:   true
+    duplicate_check:         true
+    status_distribution:     true
+
+  # ── Reporting ─────────────────────────────────────────────────────────────
+  report:
+    generate_html:       true
+    generate_csv:        true
+    generate_json:       true
+    generate_chart:      true
+    email_on_complete:   true
+    email_recipients:
+      - "migration-ops@company.com"
+      - "project-manager@company.com"
+
+# ─── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:          "INFO"              # DEBUG | INFO | WARNING | ERROR
+  format:         "%(asctime)s [%(levelname)s] %(name)s - %(message)s"
+  date_format:    "%Y-%m-%d %H:%M:%S"
+  file_enabled:   true
+  file_path:      "/data/migration/logs/migration.log"
+  file_max_bytes: 104857600           # 100 MB
+  file_backup_count: 5
+  sentry_dsn:     "${SENTRY_DSN}"    # Optional error tracking
+
+# ─── Airflow ──────────────────────────────────────────────────────────────────
+airflow:
+  dag_id:                "legacy_to_salesforce_migration"
+  schedule_interval:     null           # Manual trigger only
+  max_active_runs:       1
+  concurrency:           4
+  default_retry_count:   2
+  default_retry_delay_minutes: 5
+  sla_minutes:           480            # 8 hours SLA
+
+# ─── Rollback Configuration ───────────────────────────────────────────────────
+rollback:
+  enabled: true
+  strategy: "status_based"            # "delete" | "status_based" | "snapshot"
+  # status_based: set Migration_Status__c = 'Rolled_Back' on migrated records
+  # delete: physically delete records (destructive!)
+  # snapshot: restore from Salesforce Data Export snapshot
+  backup_before_load: true
+  backup_format: "parquet"
+  backup_dir: "/data/migration/backups"
+
+# ─── Notifications ────────────────────────────────────────────────────────────
+notifications:
+  slack:
+    enabled:     true
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    channel:     "#migration-ops"
+    notify_on:
+      - "pipeline_start"
+      - "pipeline_complete"
+      - "pipeline_failure"
+      - "validation_failure"
+
+  pagerduty:
+    enabled:      false
+    routing_key:  "${PAGERDUTY_KEY}"
+    notify_on:
+      - "pipeline_failure"
+      - "critical_validation_failure"
+
+# ─── Feature Flags ────────────────────────────────────────────────────────────
+feature_flags:
+  enable_address_validation: true
+  enable_deduplication:      true
+  enable_pii_masking:        true        # Must be false in production
+  enable_dry_run_by_default: false
+  enable_incremental_extract:true
+  enable_parallel_extract:   true
+  enable_email_notification: true
+  enable_audit_log_flush:    true
+
+# ─── Object-Specific Overrides ────────────────────────────────────────────────
+objects:
+  Account:
+    batch_size:        10000
+    job_size:          50000
+    operation:         "upsert"
+    external_id_field: "Legacy_ID__c"
+    validation_enabled: true
+    pre_delete_existing: false
+
+  Contact:
+    batch_size:        10000
+    job_size:          50000
+    operation:         "upsert"
+    external_id_field: "Legacy_ID__c"
+    validation_enabled: true
+    depends_on:        ["Account"]

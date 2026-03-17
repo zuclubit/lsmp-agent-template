@@ -1,0 +1,332 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/skills/validation/v2.0.0",
+  "title": "ValidationSkill",
+  "description": "Three-gate data quality validation for Salesforce migration jobs (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "CheckStatus": {
+      "type": "string",
+      "enum": ["PASSED", "FAILED", "WARNING", "SKIPPED", "ERROR"],
+      "description": "Result status of a single validation check"
+    },
+    "GateStatus": {
+      "type": "string",
+      "enum": ["PASSED", "PASSED_WITH_WARNINGS", "FAILED"],
+      "description": "Aggregate status of a validation gate"
+    },
+    "OverallStatus": {
+      "type": "string",
+      "enum": ["PASSED", "PASSED_WITH_WARNINGS", "FAILED"],
+      "description": "Overall validation result across all gates"
+    },
+    "GateName": {
+      "type": "string",
+      "enum": ["source_completeness", "target_validity", "post_load_sample"],
+      "description": "Validation gate identifier"
+    },
+    "ValidationCheck": {
+      "type": "object",
+      "required": ["check_name", "status", "entity_name", "message", "is_blocking"],
+      "additionalProperties": false,
+      "properties": {
+        "check_name": {
+          "type": "string",
+          "description": "Name of the check (e.g. record_count, null_rate, referential_integrity)"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        },
+        "entity_name": {
+          "type": "string",
+          "description": "Entity this check was applied to (e.g. Account, Contact)"
+        },
+        "measured_value": {
+          "description": "Actual measured value from the migration API"
+        },
+        "threshold_value": {
+          "description": "Threshold the measured value was compared against. Null if not applicable."
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable explanation of the check result"
+        },
+        "is_blocking": {
+          "type": "boolean",
+          "description": "Whether a failure of this check blocks the gate"
+        }
+      }
+    },
+    "ValidationGate": {
+      "type": "object",
+      "required": ["gate_id", "gate_name", "status", "checks", "evaluated_at"],
+      "additionalProperties": false,
+      "properties": {
+        "gate_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique gate run identifier"
+        },
+        "gate_name": {
+          "$ref": "#/$defs/GateName"
+        },
+        "status": {
+          "$ref": "#/$defs/GateStatus"
+        },
+        "checks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ValidationCheck" },
+          "description": "Individual check results for this gate"
+        },
+        "evaluated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When this gate was evaluated"
+        }
+      }
+    },
+    "ValidationThresholds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required_field_null_max_pct": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 1.0,
+          "description": "Max percentage of null values in required fields (default: 1.0%)"
+        },
+        "referential_integrity_min_pct": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 99.0,
+          "description": "Min percentage of foreign key references that must resolve (default: 99.0%)"
+        },
+        "count_tolerance_pct": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 0.1,
+          "description": "Max percentage deviation between source and target record counts (default: 0.1%)"
+        },
+        "phone_format_min_pct": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 95.0,
+          "description": "Min percentage of phone values in E.164 format (default: 95.0%)"
+        },
+        "transform_rejection_max_pct": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 0.5,
+          "description": "Max percentage of records that may be rejected during transformation (default: 0.5%)"
+        },
+        "sample_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000,
+          "default": 50,
+          "description": "Number of records to sample in Gate 3 post_load_sample check"
+        },
+        "sample_match_rate_min": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "default": 99.9,
+          "description": "Min percentage of sampled field values that must match source (default: 99.9%)"
+        }
+      }
+    },
+    "ValidationGateResult": {
+      "type": "object",
+      "required": [
+        "validation_id",
+        "migration_id",
+        "overall_status",
+        "gates",
+        "entity_names",
+        "validated_at",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "validation_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique validation run identifier"
+        },
+        "migration_id": {
+          "type": "string",
+          "description": "Migration run identifier echoed from input"
+        },
+        "overall_status": {
+          "$ref": "#/$defs/OverallStatus"
+        },
+        "gates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ValidationGate" },
+          "description": "Results for each gate that was evaluated"
+        },
+        "entity_names": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Entity names that were validated"
+        },
+        "validated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "ValidationSkill Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "ValidationInput",
+      "required": ["migration_id", "entity_names"],
+      "additionalProperties": false,
+      "properties": {
+        "migration_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration run identifier"
+        },
+        "entity_names": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "description": "Source system entity names to validate (e.g. accounts, contacts)"
+        },
+        "object_names": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": [],
+          "description": "Salesforce object names to validate in Gate 3 (e.g. Account, Contact)"
+        },
+        "skip_gate3": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip Gate 3 post_load_sample check (use for dry-run or pre-load validation only)"
+        },
+        "thresholds": {
+          "$ref": "#/$defs/ValidationThresholds",
+          "description": "Threshold overrides. Unset fields use environment variable defaults."
+        }
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/ValidationGateResult",
+      "title": "ValidationOutput",
+      "description": "Validation gate result returned by the validation agent"
+    }
+  },
+
+  "blocking_rules": {
+    "description": "Migration is blocked when overall_status = FAILED",
+    "conditions": [
+      "overall_status = FAILED",
+      "any gate.status = FAILED",
+      "any check with is_blocking=true has status=FAILED"
+    ]
+  },
+
+  "examples": [
+    {
+      "input": {
+        "migration_id": "mig-001",
+        "entity_names": ["Account", "Contact"],
+        "object_names": ["Account", "Contact"],
+        "skip_gate3": false,
+        "thresholds": {
+          "required_field_null_max_pct": 1.0,
+          "referential_integrity_min_pct": 99.0,
+          "count_tolerance_pct": 0.1,
+          "sample_size": 50
+        }
+      },
+      "output": {
+        "validation_id": "a1b2c3d4-0000-0000-0000-000000000001",
+        "migration_id": "mig-001",
+        "overall_status": "PASSED",
+        "gates": [
+          {
+            "gate_id": "b1c2d3e4-0000-0000-0000-000000000001",
+            "gate_name": "source_completeness",
+            "status": "PASSED",
+            "checks": [
+              {
+                "check_name": "record_count",
+                "status": "PASSED",
+                "entity_name": "Account",
+                "measured_value": 94000,
+                "threshold_value": 0,
+                "message": "Source record count is 94000 (non-zero, within expected range)",
+                "is_blocking": true
+              },
+              {
+                "check_name": "null_rate",
+                "status": "PASSED",
+                "entity_name": "Account",
+                "measured_value": 0.3,
+                "threshold_value": 1.0,
+                "message": "Required field null rate 0.30% is below threshold 1.00%",
+                "is_blocking": true
+              }
+            ],
+            "evaluated_at": "2026-03-16T12:00:00Z"
+          }
+        ],
+        "entity_names": ["Account", "Contact"],
+        "validated_at": "2026-03-16T12:00:00Z",
+        "duration_ms": 342
+      }
+    },
+    {
+      "input": {
+        "migration_id": "mig-002",
+        "entity_names": ["Contact"],
+        "object_names": [],
+        "skip_gate3": true
+      },
+      "output": {
+        "validation_id": "c3d4e5f6-0000-0000-0000-000000000001",
+        "migration_id": "mig-002",
+        "overall_status": "FAILED",
+        "gates": [
+          {
+            "gate_id": "d4e5f6a7-0000-0000-0000-000000000001",
+            "gate_name": "source_completeness",
+            "status": "FAILED",
+            "checks": [
+              {
+                "check_name": "null_rate",
+                "status": "FAILED",
+                "entity_name": "Contact",
+                "measured_value": 8.5,
+                "threshold_value": 1.0,
+                "message": "Required field null rate 8.50% exceeds threshold 1.00%",
+                "is_blocking": true
+              }
+            ],
+            "evaluated_at": "2026-03-16T12:05:00Z"
+          }
+        ],
+        "entity_names": ["Contact"],
+        "validated_at": "2026-03-16T12:05:00Z",
+        "duration_ms": 198
+      }
+    }
+  ]
+}

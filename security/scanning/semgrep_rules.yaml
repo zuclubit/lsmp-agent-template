@@ -1,0 +1,403 @@
+rules:
+  # ============================================================
+  # SALESFORCE API SECURITY RULES
+  # ============================================================
+
+  - id: salesforce-hardcoded-credentials
+    patterns:
+      - pattern: |
+          $CLIENT_SECRET = "..."
+      - metavariable-regex:
+          metavariable: $CLIENT_SECRET
+          regex: (?i)(client_secret|consumer_secret|sf_secret|salesforce_secret)
+    message: >
+      Hardcoded Salesforce client secret detected. Use environment variables or secrets manager.
+      Reference: SEC-POL-001 Section 6.2
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+
+  - id: salesforce-bulk-api-no-tls-verify
+    patterns:
+      - pattern: |
+          Salesforce(..., verify=False, ...)
+      - pattern: |
+          SFType(..., verify=False, ...)
+      - pattern: |
+          requests.get($URL, verify=False, ...)
+      - pattern: |
+          httpx.AsyncClient(verify=False, ...)
+    message: >
+      TLS verification disabled. This exposes the Salesforce connection to MITM attacks.
+      Remove verify=False and ensure proper CA certificates are configured.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  - id: salesforce-soql-injection
+    patterns:
+      - pattern: |
+          $SF.query("SELECT ... WHERE $FIELD = '" + $USER_INPUT + "'")
+      - pattern: |
+          $SF.query(f"SELECT ... WHERE ... {$USER_INPUT} ...")
+      - pattern: |
+          $QUERY = "SELECT ... " + $USER_INPUT
+          ...
+          $SF.query($QUERY)
+    message: >
+      Potential SOQL injection. User-controlled input is concatenated into a SOQL query.
+      Use parameterized queries or the Salesforce Bulk API with typed parameters.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+
+  - id: salesforce-session-id-logged
+    pattern: |
+      $LOG.info(..., session_id=$SESSION_ID, ...)
+    message: >
+      Salesforce session ID may be logged. Session IDs are equivalent to credentials.
+      Mask or omit session IDs from logs.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+
+  # ============================================================
+  # MIGRATION DATA HANDLING RULES
+  # ============================================================
+
+  - id: pii-in-log-statement
+    patterns:
+      - pattern: |
+          $LOGGER.$LEVEL(..., ssn=$SSN, ...)
+      - pattern: |
+          $LOGGER.$LEVEL(..., social_security=$SSN, ...)
+      - pattern: |
+          $LOGGER.$LEVEL(..., tax_id=$TI, ...)
+      - pattern: |
+          $LOGGER.$LEVEL(..., credit_card=$CC, ...)
+      - pattern: |
+          $LOGGER.$LEVEL(..., bank_account=$BA, ...)
+    message: >
+      Potential PII (SSN, tax ID, credit card, bank account) in log statement.
+      Mask or omit PII fields from all logs per data classification policy.
+      Reference: SEC-POL-002 Section 3.2
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      owasp: "A09:2021 - Security Logging and Monitoring Failures"
+
+  - id: unrestricted-bulk-delete
+    patterns:
+      - pattern: |
+          $SF.bulk.$OBJECT.delete($ALL_RECORDS)
+      - pattern: |
+          $SF.$OBJ.delete(...)
+    message: >
+      Bulk delete operation detected without apparent scope restriction.
+      Ensure all delete operations in migration are scoped with explicit
+      record ID lists and require admin approval.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: correctness
+      migration-risk: HIGH
+
+  - id: unencrypted-pii-in-temp-storage
+    patterns:
+      - pattern: |
+          with open($FILE, "w") as $F:
+            json.dump($DATA, $F)
+      - pattern: |
+          $DF.to_csv($PATH)
+      - pattern: |
+          pickle.dump($OBJ, $FILE)
+    message: >
+      Writing data to file without apparent encryption. If this data contains PII
+      or Confidential/Restricted classification, use encryption_service.py to
+      encrypt before writing. Reference: SEC-POL-001 Section 4.2
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-312: Cleartext Storage of Sensitive Information"
+
+  - id: migration-id-reference-not-validated
+    pattern: |
+      def $FUNC(..., record_id: str, ...):
+        ...
+        $SF.query(f"... {record_id} ...")
+    message: >
+      Salesforce record ID parameter used in query without visible validation.
+      Validate Salesforce ID format (15 or 18 char alphanumeric) before use.
+      Use: if not re.match(r'^[a-zA-Z0-9]{15}([a-zA-Z0-9]{3})?$', record_id)
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-20: Improper Input Validation"
+
+  # ============================================================
+  # CRYPTOGRAPHY RULES
+  # ============================================================
+
+  - id: weak-hash-for-security
+    patterns:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+      - pattern: |
+          hashlib.new("md5", ...)
+      - pattern: |
+          hashlib.new("sha1", ...)
+    message: >
+      MD5 and SHA-1 are cryptographically broken and must not be used for security
+      purposes. Use SHA-256 (hashlib.sha256) or SHA-384 minimum.
+      Exception: Non-security checksums must add # nosec B303 with justification.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  - id: aes-ecb-mode
+    patterns:
+      - pattern: |
+          Cipher(algorithms.AES(...), modes.ECB(), ...)
+      - pattern: |
+          AES.new($KEY, AES.MODE_ECB)
+    message: >
+      AES-ECB mode is deterministic and reveals patterns in plaintext.
+      Use AES-GCM (preferred) or AES-CBC with HMAC. Reference: SEC-POL-001 Section 7.1
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: insecure-random-for-crypto
+    patterns:
+      - pattern: |
+          random.random()
+      - pattern: |
+          random.randint(...)
+      - pattern: |
+          random.choice(...)
+    message: >
+      Python's random module is not cryptographically secure. Use secrets module
+      (secrets.token_bytes, secrets.token_hex) or os.urandom() for security purposes.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator"
+
+  - id: hardcoded-encryption-key
+    patterns:
+      - pattern: |
+          AES.new("...", ...)
+      - pattern: |
+          AESGCM(b"...")
+      - pattern: |
+          $KEY = b"$HARDCODED"
+          ...
+          AESGCM($KEY)
+    message: >
+      Hardcoded encryption key. Encryption keys must be loaded from secrets manager
+      (Vault, Azure Key Vault). Reference: SEC-POL-001 Section 7.3
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-321: Use of Hard-coded Cryptographic Key"
+
+  # ============================================================
+  # AUTHENTICATION AND AUTHORIZATION RULES
+  # ============================================================
+
+  - id: missing-auth-decorator
+    patterns:
+      - pattern: |
+          @router.post("...")
+          async def $FUNC(...):
+            ...
+      - pattern-not: |
+          @router.post("...")
+          @require_permission(...)
+          async def $FUNC(...):
+            ...
+      - pattern-not: |
+          @router.post("...")
+          async def $FUNC(..., user: UserContext = Depends(get_current_user), ...):
+            ...
+    message: >
+      FastAPI POST endpoint appears to lack authentication. Ensure all non-public
+      endpoints use Depends(get_current_user) and @require_permission decorator.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-306: Missing Authentication for Critical Function"
+      owasp: "A01:2021 - Broken Access Control"
+
+  - id: jwt-none-algorithm
+    patterns:
+      - pattern: |
+          jwt.decode(..., algorithms=["none"], ...)
+      - pattern: |
+          jwt.decode(..., algorithms=["none", ...], ...)
+      - pattern: |
+          jwt.decode(..., options={"verify_signature": False}, ...)
+    message: >
+      JWT 'none' algorithm or disabled signature verification. This completely bypasses
+      JWT authentication. Always specify RS256 or ES256 and verify signatures.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  - id: rbac-bypass-comment
+    pattern: |
+      # TODO: add auth
+      ...
+      async def $FUNC(...):
+        ...
+    message: >
+      Authentication TODO comment detected. Security controls must not be deferred.
+      Implement authentication before merging to any protected branch.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-306: Missing Authentication for Critical Function"
+
+  # ============================================================
+  # INJECTION RULES
+  # ============================================================
+
+  - id: sql-string-concatenation
+    patterns:
+      - pattern: |
+          $CURSOR.execute("SELECT " + $USER_INPUT)
+      - pattern: |
+          $CURSOR.execute(f"SELECT ... {$USER_INPUT} ...")
+      - pattern: |
+          $CONN.execute("INSERT ... " + $VAR + "...")
+    message: >
+      SQL query constructed via string concatenation — SQL injection risk.
+      Use parameterized queries: cursor.execute("SELECT ... WHERE id = %s", (user_id,))
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in SQL Command"
+      owasp: "A03:2021 - Injection"
+
+  - id: command-injection-via-shell
+    patterns:
+      - pattern: |
+          subprocess.run($CMD, shell=True, ...)
+      - pattern: |
+          os.system($CMD)
+      - pattern: |
+          subprocess.Popen($CMD, shell=True, ...)
+    message: >
+      Shell command executed with user-controlled input risk. If $CMD includes any
+      user/external data, this is a command injection vulnerability.
+      Use shell=False with explicit argument lists.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+
+  # ============================================================
+  # SECRETS DETECTION RULES
+  # ============================================================
+
+  - id: env-var-secret-fallback
+    patterns:
+      - pattern: |
+          os.environ.get($KEY, $DEFAULT)
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i)(password|secret|key|token|credential|api_key)
+      - metavariable-regex:
+          metavariable: $DEFAULT
+          regex: ^"[^"]+"$  # Non-empty default string
+    message: >
+      Secret environment variable has a hardcoded default value. Production secrets
+      must not have fallback default values — they should raise an error if unset.
+      Remove the default or use a non-secret default like empty string with explicit check.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+
+  - id: api-key-in-url
+    patterns:
+      - pattern: |
+          requests.get(f"$URL?api_key={$KEY}", ...)
+      - pattern: |
+          requests.get(f"$URL?token={$TOKEN}", ...)
+      - pattern: |
+          httpx.get(f"$URL?api_key={$KEY}", ...)
+    message: >
+      API key or token passed as URL query parameter. This exposes secrets in
+      server logs, browser history, and referrer headers.
+      Use Authorization header instead: headers={"Authorization": f"Bearer {token}"}
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-598: Information Exposure Through Query Strings in GET Request"
+
+  # ============================================================
+  # DEPENDENCY AND IMPORT RULES
+  # ============================================================
+
+  - id: deprecated-crypto-library
+    patterns:
+      - pattern: import Crypto
+      - pattern: from Crypto import ...
+      - pattern: import pycrypto
+    message: >
+      PyCrypto (Crypto) is deprecated and unmaintained with known vulnerabilities.
+      Use cryptography (pip install cryptography) instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+
+  - id: yaml-unsafe-load
+    patterns:
+      - pattern: yaml.load($DATA)
+      - pattern: yaml.load($DATA, Loader=None)
+      - pattern: yaml.load($DATA, Loader=yaml.Loader)
+      - pattern: yaml.load($DATA, Loader=yaml.UnsafeLoader)
+    message: >
+      yaml.load() with unsafe loader can deserialize arbitrary Python objects.
+      Use yaml.safe_load() for all YAML parsing of untrusted data.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"

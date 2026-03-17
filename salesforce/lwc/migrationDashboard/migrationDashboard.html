@@ -1,0 +1,392 @@
+<!--
+    @description  : Migration Dashboard LWC
+                    Displays real-time migration progress, statistics, batch logs,
+                    and error summaries for the migration operations team.
+    @author       : Migration Platform Team
+    @last modified: 2026-03-16
+-->
+<template>
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         PAGE HEADER
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <lightning-card title="Legacy → Salesforce Migration Dashboard" icon-name="standard:data_streams_and_ingestion">
+
+        <!-- Refresh and action controls -->
+        <div slot="actions">
+            <lightning-button-group>
+                <lightning-button
+                    label="Refresh"
+                    icon-name="utility:refresh"
+                    onclick={handleRefresh}
+                    disabled={isLoading}>
+                </lightning-button>
+                <lightning-button
+                    label="Export Report"
+                    icon-name="utility:download"
+                    onclick={handleExportReport}
+                    variant="brand-outline">
+                </lightning-button>
+                <lightning-button
+                    label={runBatchLabel}
+                    icon-name="utility:apex"
+                    onclick={handleRunBatch}
+                    variant="brand"
+                    disabled={isBatchRunning}>
+                </lightning-button>
+            </lightning-button-group>
+        </div>
+
+        <div class="slds-var-p-around_medium">
+
+            <!-- Loading spinner overlay -->
+            <template if:true={isLoading}>
+                <div class="loading-overlay">
+                    <lightning-spinner
+                        alternative-text="Loading migration data..."
+                        size="large"
+                        variant="brand">
+                    </lightning-spinner>
+                </div>
+            </template>
+
+            <!-- Global error toast area -->
+            <template if:true={hasGlobalError}>
+                <div class="slds-notify slds-notify_alert slds-alert_error migration-alert" role="alert">
+                    <lightning-icon icon-name="utility:error" alternative-text="Error"
+                        size="small" variant="inverse" class="slds-var-m-right_x-small">
+                    </lightning-icon>
+                    <span>{globalErrorMessage}</span>
+                    <button class="slds-button slds-button_icon slds-button_icon-inverse
+                                  slds-notify__close" onclick={dismissGlobalError}>
+                        <lightning-icon icon-name="utility:close" alternative-text="Close"
+                            size="x-small" variant="inverse">
+                        </lightning-icon>
+                    </button>
+                </div>
+            </template>
+
+            <!-- ───────────────────────────────────────────────────────────
+                 ROW 1 — SUMMARY KPI CARDS
+            ─────────────────────────────────────────────────────────────── -->
+            <div class="slds-grid slds-gutters slds-wrap slds-var-m-bottom_medium">
+
+                <!-- Total Records -->
+                <div class="slds-col slds-size_1-of-2 slds-large-size_1-of-4">
+                    <article class="slds-card kpi-card kpi-card--total">
+                        <div class="slds-card__header slds-grid">
+                            <header class="slds-media slds-media_center slds-has-flexi-truncate">
+                                <div class="slds-media__figure">
+                                    <lightning-icon icon-name="standard:account"
+                                        size="small" class="kpi-icon">
+                                    </lightning-icon>
+                                </div>
+                                <div class="slds-media__body">
+                                    <h2 class="kpi-label">Total Records</h2>
+                                </div>
+                            </header>
+                        </div>
+                        <div class="slds-card__body slds-card__body_inner">
+                            <p class="kpi-value">{stats.totalRecords}</p>
+                            <p class="kpi-sublabel">Legacy source</p>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- Migrated -->
+                <div class="slds-col slds-size_1-of-2 slds-large-size_1-of-4">
+                    <article class="slds-card kpi-card kpi-card--success">
+                        <div class="slds-card__header slds-grid">
+                            <header class="slds-media slds-media_center slds-has-flexi-truncate">
+                                <div class="slds-media__figure">
+                                    <lightning-icon icon-name="utility:success"
+                                        size="small" variant="success" class="kpi-icon">
+                                    </lightning-icon>
+                                </div>
+                                <div class="slds-media__body">
+                                    <h2 class="kpi-label">Migrated</h2>
+                                </div>
+                            </header>
+                        </div>
+                        <div class="slds-card__body slds-card__body_inner">
+                            <p class="kpi-value kpi-value--success">{stats.migratedRecords}</p>
+                            <p class="kpi-sublabel">{stats.successRate}% success rate</p>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- Failed -->
+                <div class="slds-col slds-size_1-of-2 slds-large-size_1-of-4">
+                    <article class="slds-card kpi-card kpi-card--error">
+                        <div class="slds-card__header slds-grid">
+                            <header class="slds-media slds-media_center slds-has-flexi-truncate">
+                                <div class="slds-media__figure">
+                                    <lightning-icon icon-name="utility:error"
+                                        size="small" variant="error" class="kpi-icon">
+                                    </lightning-icon>
+                                </div>
+                                <div class="slds-media__body">
+                                    <h2 class="kpi-label">Failed</h2>
+                                </div>
+                            </header>
+                        </div>
+                        <div class="slds-card__body slds-card__body_inner">
+                            <p class="kpi-value kpi-value--error">{stats.failedRecords}</p>
+                            <p class="kpi-sublabel">{stats.failureRate}% failure rate</p>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- Pending -->
+                <div class="slds-col slds-size_1-of-2 slds-large-size_1-of-4">
+                    <article class="slds-card kpi-card kpi-card--pending">
+                        <div class="slds-card__header slds-grid">
+                            <header class="slds-media slds-media_center slds-has-flexi-truncate">
+                                <div class="slds-media__figure">
+                                    <lightning-icon icon-name="utility:clock"
+                                        size="small" class="kpi-icon">
+                                    </lightning-icon>
+                                </div>
+                                <div class="slds-media__body">
+                                    <h2 class="kpi-label">Pending</h2>
+                                </div>
+                            </header>
+                        </div>
+                        <div class="slds-card__body slds-card__body_inner">
+                            <p class="kpi-value kpi-value--pending">{stats.pendingRecords}</p>
+                            <p class="kpi-sublabel">Awaiting processing</p>
+                        </div>
+                    </article>
+                </div>
+
+            </div>
+
+            <!-- ───────────────────────────────────────────────────────────
+                 ROW 2 — OVERALL PROGRESS BAR
+            ─────────────────────────────────────────────────────────────── -->
+            <div class="slds-var-m-bottom_medium">
+                <lightning-card title="Overall Migration Progress">
+                    <div class="slds-var-p-around_medium">
+                        <div class="progress-header">
+                            <span class="progress-label">Progress: {stats.successRate}% complete</span>
+                            <span class="progress-estimate">
+                                Est. completion: {stats.estimatedCompletion}
+                            </span>
+                        </div>
+                        <lightning-progress-bar
+                            value={stats.successRate}
+                            size="large"
+                            variant={progressVariant}>
+                        </lightning-progress-bar>
+                        <div class="progress-legend slds-grid slds-gutters slds-var-m-top_small">
+                            <div class="slds-col">
+                                <span class="legend-dot legend-dot--success"></span>
+                                Migrated: {stats.migratedRecords}
+                            </div>
+                            <div class="slds-col">
+                                <span class="legend-dot legend-dot--in-progress"></span>
+                                In Progress: {stats.inProgressRecords}
+                            </div>
+                            <div class="slds-col">
+                                <span class="legend-dot legend-dot--error"></span>
+                                Failed: {stats.failedRecords}
+                            </div>
+                            <div class="slds-col">
+                                <span class="legend-dot legend-dot--pending"></span>
+                                Pending: {stats.pendingRecords}
+                            </div>
+                        </div>
+                    </div>
+                </lightning-card>
+            </div>
+
+            <!-- ───────────────────────────────────────────────────────────
+                 ROW 3 — OBJECT BREAKDOWN TABLE
+            ─────────────────────────────────────────────────────────────── -->
+            <div class="slds-grid slds-gutters slds-var-m-bottom_medium">
+
+                <!-- Per-Object Progress -->
+                <div class="slds-col slds-size_1-of-1 slds-large-size_7-of-12">
+                    <lightning-card title="Migration by Object">
+                        <div class="slds-var-p-around_medium">
+                            <template if:true={hasObjectBreakdown}>
+                                <template for:each={objectBreakdown} for:item="obj">
+                                    <div key={obj.label} class="object-row slds-var-m-bottom_small">
+                                        <div class="slds-grid slds-gutters slds-grid_align-spread">
+                                            <span class="object-label">{obj.label}</span>
+                                            <span class="object-count">
+                                                {obj.migrated} / {obj.total}
+                                            </span>
+                                        </div>
+                                        <lightning-progress-bar
+                                            value={obj.pct}
+                                            size="medium"
+                                            variant={obj.variant}>
+                                        </lightning-progress-bar>
+                                        <div class="object-sub">
+                                            <span class="badge badge--success">{obj.migrated} migrated</span>
+                                            <span class="badge badge--error">{obj.failed} failed</span>
+                                        </div>
+                                    </div>
+                                </template>
+                            </template>
+                            <template if:false={hasObjectBreakdown}>
+                                <p class="slds-text-color_weak">No migration data available.</p>
+                            </template>
+                        </div>
+                    </lightning-card>
+                </div>
+
+                <!-- Batch Run History -->
+                <div class="slds-col slds-size_1-of-1 slds-large-size_5-of-12">
+                    <lightning-card title="Recent Batch Runs">
+                        <div class="slds-var-p-around_medium">
+                            <template if:true={hasBatchRuns}>
+                                <template for:each={recentBatchRuns} for:item="run">
+                                    <div key={run.id} class="batch-run-row">
+                                        <div class="slds-grid slds-gutters_xx-small">
+                                            <lightning-icon
+                                                icon-name={run.statusIcon}
+                                                size="xx-small"
+                                                variant={run.statusVariant}
+                                                class="slds-var-m-right_xx-small">
+                                            </lightning-icon>
+                                            <div class="slds-col">
+                                                <p class="batch-run-label">{run.label}</p>
+                                                <p class="batch-run-meta">
+                                                    {run.processed} processed · {run.failed} failed
+                                                    · {run.duration}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </template>
+                            <template if:false={hasBatchRuns}>
+                                <p class="slds-text-color_weak">No batch runs recorded.</p>
+                            </template>
+                        </div>
+                    </lightning-card>
+                </div>
+
+            </div>
+
+            <!-- ───────────────────────────────────────────────────────────
+                 ROW 4 — ERROR LOG TABLE
+            ─────────────────────────────────────────────────────────────── -->
+            <div class="slds-var-m-bottom_medium">
+                <lightning-card title="Recent Errors">
+                    <div slot="actions">
+                        <lightning-badge label={errorCountLabel} class="error-badge"></lightning-badge>
+                    </div>
+                    <div class="slds-var-p-around_x-small">
+                        <template if:true={hasErrors}>
+                            <lightning-datatable
+                                key-field="id"
+                                data={errorRows}
+                                columns={errorColumns}
+                                hide-checkbox-column
+                                sorted-by={sortedBy}
+                                sorted-direction={sortedDirection}
+                                onsort={handleErrorSort}
+                                row-number-offset={rowNumberOffset}
+                                show-row-number-column>
+                            </lightning-datatable>
+                            <div class="slds-var-m-top_small slds-align_absolute-center">
+                                <lightning-button
+                                    label="Load More Errors"
+                                    onclick={handleLoadMoreErrors}
+                                    disabled={allErrorsLoaded}>
+                                </lightning-button>
+                            </div>
+                        </template>
+                        <template if:false={hasErrors}>
+                            <div class="no-errors-container">
+                                <lightning-icon icon-name="utility:success"
+                                    size="large" variant="success">
+                                </lightning-icon>
+                                <p class="slds-text-heading_small slds-text-color_success">
+                                    No errors found in the current migration window.
+                                </p>
+                            </div>
+                        </template>
+                    </div>
+                </lightning-card>
+            </div>
+
+            <!-- Last refreshed timestamp -->
+            <div class="refresh-footer">
+                <lightning-icon icon-name="utility:info" size="xx-small"
+                    class="slds-var-m-right_xx-small">
+                </lightning-icon>
+                Last refreshed: {lastRefreshed}
+                &nbsp;|&nbsp; Auto-refresh: every {autoRefreshInterval}s
+                <lightning-input
+                    type="toggle"
+                    label="Auto-refresh"
+                    checked={autoRefreshEnabled}
+                    onchange={toggleAutoRefresh}
+                    variant="label-hidden"
+                    class="slds-var-m-left_small">
+                </lightning-input>
+            </div>
+
+        </div>
+    </lightning-card>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         BATCH RUN CONFIRMATION MODAL
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <template if:true={showBatchModal}>
+        <section role="dialog" tabindex="-1" class="slds-modal slds-fade-in-open" aria-modal="true">
+            <div class="slds-modal__container">
+                <header class="slds-modal__header">
+                    <button class="slds-button slds-button_icon slds-modal__close
+                                  slds-button_icon-inverse" title="Close" onclick={closeBatchModal}>
+                        <lightning-icon icon-name="utility:close" size="small" variant="inverse">
+                        </lightning-icon>
+                    </button>
+                    <h2 class="slds-text-heading_medium slds-hyphenate">Initiate Migration Batch</h2>
+                </header>
+                <div class="slds-modal__content slds-var-p-around_medium">
+                    <p>Configure and launch a migration batch run.</p>
+                    <lightning-combobox
+                        label="Object to Migrate"
+                        value={batchConfig.objectName}
+                        options={objectOptions}
+                        onchange={handleBatchConfigChange}
+                        data-field="objectName"
+                        class="slds-var-m-top_small">
+                    </lightning-combobox>
+                    <lightning-input
+                        type="number"
+                        label="Batch Size"
+                        value={batchConfig.batchSize}
+                        min="50" max="2000"
+                        onchange={handleBatchConfigChange}
+                        data-field="batchSize"
+                        class="slds-var-m-top_small">
+                    </lightning-input>
+                    <lightning-input
+                        type="toggle"
+                        label="Dry Run (no data written)"
+                        checked={batchConfig.dryRun}
+                        onchange={handleBatchConfigChange}
+                        data-field="dryRun"
+                        class="slds-var-m-top_small">
+                    </lightning-input>
+                </div>
+                <footer class="slds-modal__footer">
+                    <lightning-button label="Cancel" onclick={closeBatchModal}></lightning-button>
+                    <lightning-button
+                        label="Launch Batch"
+                        variant="brand"
+                        onclick={confirmRunBatch}
+                        class="slds-var-m-left_x-small">
+                    </lightning-button>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
+
+</template>

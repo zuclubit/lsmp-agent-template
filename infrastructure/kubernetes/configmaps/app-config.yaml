@@ -1,0 +1,190 @@
+##############################################################################
+# app-config.yaml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : ConfigMap for non-sensitive application configuration
+#           All sensitive values (passwords, tokens, keys) are in Secrets
+##############################################################################
+
+---
+# Migration worker configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migration-app-config
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: sfmigration
+data:
+  # Application environment
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+
+  # Salesforce API settings (non-sensitive)
+  SF_INSTANCE_URL: "https://company.my.salesforce.com"
+  SF_API_VERSION: "59.0"
+  SF_BULK_API_VERSION: "2"
+  SF_MAX_CONCURRENT_JOBS: "5"
+  SF_BULK_BATCH_SIZE: "10000"
+  SF_REST_BATCH_SIZE: "200"
+  SF_QUERY_TIMEOUT_SECONDS: "300"
+  SF_RETRY_MAX_ATTEMPTS: "5"
+  SF_RETRY_BACKOFF_FACTOR: "2"
+
+  # Migration pipeline settings
+  BATCH_SIZE: "1000"
+  WORKER_CONCURRENCY: "8"
+  TRANSFORM_PARALLELISM: "4"
+  VALIDATION_STRICT_MODE: "true"
+  DUPLICATE_CHECK_ENABLED: "true"
+  DRY_RUN_MODE: "false"
+  MAX_ERROR_THRESHOLD_PERCENT: "1.0"
+  CHECKPOINT_INTERVAL_SECONDS: "300"
+
+  # Kafka settings (non-sensitive)
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  KAFKA_CONSUMER_GROUP: "migration-worker-cg"
+  KAFKA_INPUT_TOPIC: "migration.jobs"
+  KAFKA_OUTPUT_TOPIC: "migration.results"
+  KAFKA_DLQ_TOPIC: "migration.dlq"
+  KAFKA_AUTO_OFFSET_RESET: "earliest"
+  KAFKA_MAX_POLL_RECORDS: "500"
+  KAFKA_SESSION_TIMEOUT_MS: "30000"
+  KAFKA_HEARTBEAT_INTERVAL_MS: "10000"
+
+  # Database pool settings (non-sensitive)
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "30"
+  DATABASE_POOL_TIMEOUT: "30"
+  DATABASE_POOL_RECYCLE: "3600"
+  DATABASE_ECHO_SQL: "false"
+
+  # Redis settings (non-sensitive)
+  REDIS_POOL_SIZE: "20"
+  REDIS_DECODE_RESPONSES: "true"
+  REDIS_SOCKET_TIMEOUT: "5"
+  REDIS_RETRY_ON_TIMEOUT: "true"
+
+  # Observability
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  TRACING_ENABLED: "true"
+  TRACING_EXPORTER: "otlp"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  OTEL_SERVICE_NAME: "migration-worker"
+  OTEL_SERVICE_VERSION: "1.0.0"
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "0.1"
+
+  # Health check settings
+  HEALTH_CHECK_PORT: "8080"
+  STARTUP_PROBE_TIMEOUT_SECONDS: "60"
+
+  # Feature flags
+  FEATURE_INCREMENTAL_MIGRATION: "true"
+  FEATURE_AUTO_RECONCILE: "true"
+  FEATURE_FIELD_MAPPING_CACHE: "true"
+
+---
+# API Gateway configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-app-config
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: sfmigration
+data:
+  APP_ENV: "production"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+
+  # Server settings
+  UVICORN_HOST: "0.0.0.0"
+  UVICORN_PORT: "8000"
+  UVICORN_WORKERS: "4"
+  UVICORN_LOOP: "uvloop"
+  UVICORN_HTTP: "httptools"
+  UVICORN_BACKLOG: "2048"
+  UVICORN_TIMEOUT_KEEP_ALIVE: "30"
+
+  # API settings
+  API_V1_PREFIX: "/api/v1"
+  PROJECT_NAME: "SF Migration API Gateway"
+  MAX_CONNECTIONS: "1000"
+  REQUEST_TIMEOUT_SECONDS: "120"
+  CORS_ORIGINS: "https://app.company.com,https://admin.company.com"
+
+  # Authentication (settings only, keys in secrets)
+  JWT_ALGORITHM: "RS256"
+  JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+  JWT_REFRESH_TOKEN_EXPIRE_DAYS: "7"
+
+  # Rate limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_PER_MINUTE: "300"
+  RATE_LIMIT_BURST: "50"
+
+  # Salesforce connection (non-sensitive)
+  SF_INSTANCE_URL: "https://company.my.salesforce.com"
+  SF_API_VERSION: "59.0"
+  SF_CONNECTION_POOL_SIZE: "10"
+
+  # Database pool
+  DATABASE_POOL_SIZE: "20"
+  DATABASE_MAX_OVERFLOW: "20"
+  DATABASE_POOL_TIMEOUT: "30"
+
+  # Redis
+  REDIS_POOL_SIZE: "10"
+
+  # Kafka
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  KAFKA_PRODUCER_TOPIC: "migration.jobs"
+
+  # Observability
+  METRICS_ENABLED: "true"
+  TRACING_ENABLED: "true"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4317"
+  OTEL_SERVICE_NAME: "api-gateway"
+  OTEL_SERVICE_VERSION: "1.0.0"
+
+---
+# Uvicorn logging config (JSON format for log aggregation)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uvicorn-log-config
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/part-of: sfmigration
+data:
+  uvicorn-log.json: |
+    {
+      "version": 1,
+      "disable_existing_loggers": false,
+      "formatters": {
+        "json": {
+          "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+          "format": "%(asctime)s %(name)s %(levelname)s %(message)s %(pathname)s %(lineno)d"
+        }
+      },
+      "handlers": {
+        "console": {
+          "class": "logging.StreamHandler",
+          "formatter": "json",
+          "stream": "ext://sys.stdout"
+        }
+      },
+      "loggers": {
+        "uvicorn": { "handlers": ["console"], "level": "INFO", "propagate": false },
+        "uvicorn.error": { "handlers": ["console"], "level": "INFO", "propagate": false },
+        "uvicorn.access": { "handlers": ["console"], "level": "INFO", "propagate": false }
+      },
+      "root": { "handlers": ["console"], "level": "INFO" }
+    }

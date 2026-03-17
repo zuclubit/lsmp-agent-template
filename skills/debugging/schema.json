@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/skills/debugging/v2.0.0",
+  "title": "DebuggingSkill",
+  "description": "Read-only diagnosis of migration pipeline failures (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "RootCauseCategory": {
+      "type": "string",
+      "enum": [
+        "NET_TIMEOUT",
+        "NET_DNS_FAILURE",
+        "RATE_LIMIT_SF",
+        "RATE_LIMIT_DOWNSTREAM",
+        "AUTH_TOKEN_EXPIRED",
+        "AUTH_PERMISSION_DENIED",
+        "DQ_SCHEMA_DRIFT",
+        "DQ_VALIDATION_GATE_BLOCKED",
+        "DQ_NULL_CONSTRAINT",
+        "DQ_REFERENTIAL_INTEGRITY",
+        "INFRA_OOM",
+        "INFRA_CRASHLOOP",
+        "INFRA_DISK_PRESSURE",
+        "CONFIG_MISSING_ENV",
+        "CONFIG_INVALID_MAPPING",
+        "CONCURRENCY_DEADLOCK",
+        "CONCURRENCY_LOCK_TIMEOUT",
+        "IDEMPOTENCY_DUPLICATE",
+        "UNKNOWN"
+      ],
+      "description": "Root cause category from the debugging taxonomy"
+    },
+    "FailureTypeHint": {
+      "type": "string",
+      "enum": [
+        "timeout",
+        "oom",
+        "validation",
+        "rate_limit",
+        "auth",
+        "data_quality",
+        "config",
+        "concurrency",
+        "unknown"
+      ],
+      "description": "Optional hint about the failure type to narrow the search"
+    },
+    "EvidenceSource": {
+      "type": "string",
+      "enum": ["api_response", "logs", "metrics", "step_status"],
+      "description": "Which data source this evidence item came from"
+    },
+    "EvidenceItem": {
+      "type": "object",
+      "required": ["source", "timestamp", "content", "relevance"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/EvidenceSource"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 timestamp of the evidence item"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Redacted excerpt of the evidence. Secrets and PII are removed before inclusion."
+        },
+        "relevance": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "How strongly this item supports the diagnosis (0.0 = irrelevant, 1.0 = definitive)"
+        }
+      }
+    },
+    "DiagnosisResult": {
+      "type": "object",
+      "required": [
+        "root_cause_category",
+        "confidence",
+        "evidence",
+        "recommended_fix",
+        "runbook_ref",
+        "auto_recoverable"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "root_cause_category": {
+          "$ref": "#/$defs/RootCauseCategory"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Confidence in the diagnosis: 0.9-1.0=High, 0.7-0.89=Medium, 0.5-0.69=Low, <0.5=Insufficient"
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceItem" },
+          "description": "Evidence items supporting the diagnosis, ordered by relevance descending"
+        },
+        "recommended_fix": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Human-readable description of the recommended remediation action"
+        },
+        "runbook_ref": {
+          "type": ["string", "null"],
+          "description": "Path or URL to the relevant runbook. Null if no runbook applies."
+        },
+        "auto_recoverable": {
+          "type": "boolean",
+          "description": "True only when confidence >= 0.90 AND the root cause has a known safe automated recovery. Signals the orchestrator that it may proceed without human approval."
+        },
+        "affected_step_id": {
+          "type": ["string", "null"],
+          "description": "Migration step ID where the failure occurred. Null if not determinable."
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "DebuggingSkill Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "DebuggingInput",
+      "required": ["job_id", "tenant_id"],
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration job identifier"
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tenant owning the migration job"
+        },
+        "failed_step_id": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Specific step ID that failed. Narrows the diagnostic search to this step."
+        },
+        "failure_type": {
+          "oneOf": [
+            { "$ref": "#/$defs/FailureTypeHint" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "description": "Optional hint about the failure type. Narrows the search space."
+        },
+        "log_window_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440,
+          "default": 30,
+          "description": "How many minutes back from failure timestamp to search in logs"
+        }
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/DiagnosisResult",
+      "title": "DebuggingOutput",
+      "description": "Diagnosis result returned by the debugging skill"
+    }
+  },
+
+  "read_only_constraint": {
+    "description": "This skill ONLY calls read-only API endpoints. It never calls POST/PUT/PATCH/DELETE.",
+    "allowed_methods": ["GET"],
+    "allowed_endpoints": [
+      "GET /migrations/{id}/status",
+      "GET /migrations/{id}/steps/{step_id}",
+      "GET /migrations/{id}/logs",
+      "GET /migrations/{id}/metrics",
+      "GET /jobs/{id}/failures"
+    ]
+  },
+
+  "auto_recovery_policy": {
+    "description": "auto_recoverable=true only when confidence >= 0.90 AND category is in this list",
+    "recoverable_categories": [
+      "NET_TIMEOUT",
+      "RATE_LIMIT_SF",
+      "RATE_LIMIT_DOWNSTREAM",
+      "AUTH_TOKEN_EXPIRED"
+    ]
+  },
+
+  "examples": [
+    {
+      "input": {
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "failed_step_id": "step-extract-account-001",
+        "failure_type": "timeout",
+        "log_window_minutes": 60
+      },
+      "output": {
+        "root_cause_category": "NET_TIMEOUT",
+        "confidence": 0.94,
+        "evidence": [
+          {
+            "source": "api_response",
+            "timestamp": "2026-03-16T11:58:32Z",
+            "content": "Step step-extract-account-001 failed with error: 'Connection to db.internal:5432 timed out after 60s'",
+            "relevance": 0.95
+          },
+          {
+            "source": "step_status",
+            "timestamp": "2026-03-16T11:58:33Z",
+            "content": "Step status: FAILED, duration_ms: 60042, records_processed: 0, error_code: NET_TIMEOUT",
+            "relevance": 0.90
+          }
+        ],
+        "recommended_fix": "Increase the database connection timeout in migration config (currently 60s). Check if db.internal is experiencing high load. Consider retrying the step after a 30-second backoff.",
+        "runbook_ref": "monitoring/runbooks/net-timeout-recovery.md",
+        "auto_recoverable": true,
+        "affected_step_id": "step-extract-account-001"
+      }
+    },
+    {
+      "input": {
+        "job_id": "job-globex-2026-002",
+        "tenant_id": "tenant-globex",
+        "failed_step_id": null,
+        "failure_type": "validation",
+        "log_window_minutes": 30
+      },
+      "output": {
+        "root_cause_category": "DQ_VALIDATION_GATE_BLOCKED",
+        "confidence": 0.98,
+        "evidence": [
+          {
+            "source": "api_response",
+            "timestamp": "2026-03-16T10:30:11Z",
+            "content": "Gate source_completeness FAILED: null_rate 8.50% exceeds threshold 1.00% for entity Contact.Email",
+            "relevance": 0.98
+          }
+        ],
+        "recommended_fix": "Source Contact records have 8.5% null Email values — exceeds the 1.0% threshold. Investigate source data quality. Either fix source data or raise the null_rate_max threshold if business rules permit null emails.",
+        "runbook_ref": "monitoring/runbooks/validation-gate-blocked.md",
+        "auto_recoverable": false,
+        "affected_step_id": null
+      }
+    }
+  ]
+}

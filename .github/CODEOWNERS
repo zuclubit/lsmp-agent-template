@@ -1,0 +1,40 @@
+# =============================================================================
+# CODEOWNERS — Legacy-to-Salesforce Migration Platform
+# All PRs require review from the relevant team(s) listed here.
+# =============================================================================
+
+# Global owners — fallback for any path not matched below
+* @zuclubit/platform-engineering
+
+# Agent system
+/agents/ @zuclubit/ai-platform
+/agents/security-agent/ @zuclubit/security
+/agents/validation-agent/ @zuclubit/data-quality
+/agents/_shared/ @zuclubit/ai-platform @zuclubit/platform-engineering
+
+# Skills and tools
+/skills/ @zuclubit/ai-platform
+/tools/ @zuclubit/ai-platform
+
+# Security — require security team review on all changes
+/security/ @zuclubit/security
+/.claude/ @zuclubit/security
+
+# Infrastructure
+/infrastructure/ @zuclubit/sre
+/ci-cd/ @zuclubit/sre
+/context-servers/ @zuclubit/sre
+
+# Compliance — require both compliance and security team review
+/security/compliance/ @zuclubit/compliance @zuclubit/security
+
+# Configuration — any threshold or model change needs review
+/config/agents.yaml @zuclubit/ai-platform @zuclubit/platform-engineering
+/config/halcon.yaml @zuclubit/ai-platform
+/CLAUDE.md @zuclubit/platform-engineering
+
+# Migration pipeline — ETL changes need data quality review
+/migration/ @zuclubit/ai-platform @zuclubit/data-quality
+
+# Monitoring and observability
+/monitoring/ @zuclubit/sre @zuclubit/ai-platform

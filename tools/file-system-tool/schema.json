@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent/tools/file-system-tool/schema.json",
+  "title": "FileSystemTool",
+  "description": "Read-only file system access tool with path whitelisting. No write operations are permitted.",
+  "type": "object",
+  "required": ["tool_name", "description", "allowed_operations", "path_restrictions"],
+  "properties": {
+    "tool_name": {
+      "type": "string",
+      "const": "file-system-tool",
+      "description": "Canonical name of this tool."
+    },
+    "description": {
+      "type": "string",
+      "const": "Provides read-only access to whitelisted file system paths. Cannot write, delete, move, or create files or directories."
+    },
+    "allowed_operations": {
+      "type": "array",
+      "description": "Exhaustive list of permitted operations. No other operations are available.",
+      "items": {
+        "type": "string",
+        "enum": ["read_file", "list_directory", "search_files"]
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "path_restrictions": {
+      "type": "object",
+      "description": "Access control constraints applied to all operations.",
+      "required": ["whitelisted_paths", "write_operations_permitted", "path_traversal_protection"],
+      "additionalProperties": false,
+      "properties": {
+        "whitelisted_paths": {
+          "type": "array",
+          "description": "Only paths under these prefixes may be accessed.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "/var/data/migration/",
+              "/tmp/migration-work/",
+              "./docs/",
+              "./monitoring/",
+              "./architecture/"
+            ]
+          ]
+        },
+        "write_operations_permitted": {
+          "type": "boolean",
+          "const": false,
+          "description": "Write operations are never permitted. Any attempt raises NotImplementedError."
+        },
+        "path_traversal_protection": {
+          "type": "boolean",
+          "const": true,
+          "description": "All paths are resolved via Path.resolve() before whitelist comparison, preventing ../ traversal attacks."
+        },
+        "max_file_size_bytes": {
+          "type": "integer",
+          "const": 4194304,
+          "description": "Maximum file size (4 MB) that read_file will return. Larger files raise ValueError."
+        },
+        "max_list_entries": {
+          "type": "integer",
+          "const": 500,
+          "description": "Maximum number of entries list_directory will return."
+        },
+        "max_search_results": {
+          "type": "integer",
+          "const": 200,
+          "description": "Maximum number of file paths search_files will return."
+        }
+      }
+    },
+    "operations": {
+      "type": "object",
+      "description": "Schema definitions for each allowed operation.",
+      "properties": {
+        "read_file": {
+          "type": "object",
+          "description": "Read and return the content of a whitelisted file.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Absolute or relative path to the file to read."
+                }
+              }
+            },
+            "output": {
+              "type": "string",
+              "description": "UTF-8 decoded file content."
+            },
+            "errors": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["PermissionError", "FileNotFoundError", "IsADirectoryError", "ValueError"]]
+            }
+          }
+        },
+        "list_directory": {
+          "type": "object",
+          "description": "List immediate contents of a whitelisted directory.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Absolute or relative path to the directory to list."
+                }
+              }
+            },
+            "output": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Entry names. Directories are suffixed with '/'."
+            },
+            "errors": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["PermissionError", "FileNotFoundError", "NotADirectoryError"]]
+            }
+          }
+        },
+        "search_files": {
+          "type": "object",
+          "description": "Search for files matching a glob pattern within a whitelisted directory.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["pattern", "directory"],
+              "properties": {
+                "pattern": {
+                  "type": "string",
+                  "description": "Relative glob pattern (e.g. '*.yaml', '**/*.md'). Must not be an absolute path."
+                },
+                "directory": {
+                  "type": "string",
+                  "description": "Root directory for the glob search. Must be whitelisted."
+                }
+              }
+            },
+            "output": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "Absolute paths of matching files, sorted lexicographically."
+            },
+            "errors": {
+              "type": "array",
+              "items": {"type": "string"},
+              "examples": [["PermissionError", "FileNotFoundError", "NotADirectoryError", "ValueError"]]
+            }
+          }
+        }
+      }
+    }
+  }
+}

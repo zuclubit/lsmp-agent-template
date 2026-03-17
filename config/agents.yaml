@@ -1,0 +1,235 @@
+# Agent Configuration — Migration Platform (2026)
+# Controls: model selection, token budgets, iterations, tool access, feature flags
+#
+# All agents use claude-sonnet-4-6 or claude-opus-4-6.
+# Temperature 0.0 for all agents — determinism required for migration operations.
+# human_in_the_loop enforced by orchestrator-agent before ROLLBACK and HIGH_RISK_EXECUTION.
+
+agents:
+  orchestrator-agent:
+    description: "Coordinates migration workflow, enforces gates, delegates to specialist agents"
+    model: claude-opus-4-6
+    max_tokens: 8192
+    max_iterations: 15
+    temperature: 0.0
+    timeout_seconds: 300
+    circuit_breaker_threshold: 3
+    tool_access:
+      - delegate_to_agent
+      - enforce_gate
+      - emit_halcon_metrics
+      - api-client-tool
+    context_servers:
+      - project-context
+      - runtime-context
+      - security-context
+    allowed_downstream_agents:
+      - migration-agent
+      - validation-agent
+      - security-agent
+      - debugging-agent
+      - documentation-agent
+    halcon_enabled: true
+    human_in_the_loop:
+      required_for:
+        - ROLLBACK
+        - HIGH_RISK_EXECUTION
+        - OVERRIDE_GATE
+      confirmation_timeout_minutes: 30
+      on_timeout: ESCALATE_AND_BLOCK
+    human_confirmation_required_for:
+      - rollback
+      - force_complete
+      - pause_all
+    feature_flags:
+      emit_retrospective_on_completion: true
+      strict_gate_enforcement: true
+      allow_plan_override: false
+    halcon_metrics:
+      track_convergence_efficiency: true
+      track_decision_density: true
+      track_adaptation_utilization: true
+
+  migration-agent:
+    description: "Executes data migration in chunks via Kafka pipeline"
+    model: claude-sonnet-4-6
+    max_tokens: 4096
+    max_iterations: 20
+    temperature: 0.0
+    timeout_seconds: 3600
+    checkpoint_enabled: true
+    idempotency_check: true
+    requires_validation_gate: ALLOW
+    tool_access:
+      - api-client-tool
+      - validation-tool
+    context_servers:
+      - project-context
+      - runtime-context
+    human_in_the_loop:
+      required_for:
+        - FORCE_DELETE
+        - ROLLBACK_EXECUTION
+      confirmation_timeout_minutes: 30
+      on_timeout: BLOCK
+    feature_flags:
+      chunk_processing_enabled: true
+      dlq_monitoring_enabled: true
+      auto_pause_on_dlq_threshold: true
+      dlq_threshold: 100
+      max_concurrent_chunks: 5
+    rate_limits:
+      max_kafka_publish_per_second: 1000
+      max_sf_api_calls_per_minute: 100
+    halcon_metrics:
+      track_records_migrated: true
+      track_dlq_depth: true
+      track_chunk_duration: true
+
+  validation-agent:
+    description: "Executes Gate 1, Gate 2, and Gate 3 validation against real data sources"
+    model: claude-sonnet-4-6
+    max_tokens: 8192
+    max_iterations: 20
+    temperature: 0.0
+    timeout_seconds: 180
+    tool_access:
+      - validation-tool
+      - api-client-tool
+    context_servers:
+      - project-context
+      - runtime-context
+    thresholds:
+      record_count_tolerance: 0.001
+      required_field_null_rate_max: 0.05
+      referential_integrity_min: 0.99
+      post_load_sample_rate: 0.01
+      default_sample_size: 500
+    gate_decisions:
+      BLOCK_if_critical_failure: true
+      default_when_no_report: FAILED
+    feature_flags:
+      gate1_enabled: true
+      gate2_enabled: true
+      gate3_enabled: true
+      strict_null_rate_enforcement: true
+    halcon_metrics:
+      track_gate_pass_rate: true
+      track_validation_duration: true
+
+  security-agent:
+    description: "Runs security audits: secrets scan, dependency audit, API security, SOQL injection"
+    model: claude-sonnet-4-6
+    max_tokens: 4096
+    max_iterations: 10
+    temperature: 0.0
+    timeout_seconds: 600
+    tool_access:
+      - file-system-tool
+      - api-client-tool
+    context_servers:
+      - security-context
+      - project-context
+    path_whitelist:
+      - "/var/data/migration/"
+      - "/tmp/migration-work/"
+      - "./docs/"
+      - "./monitoring/"
+      - "./architecture/"
+    soql_allowed_statements:
+      - SELECT
+    entropy_threshold: 4.5
+    block_threshold_risk_score: 0.7
+    feature_flags:
+      secrets_scan_enabled: true
+      dependency_audit_enabled: true
+      api_security_check_enabled: true
+      soql_injection_check_enabled: true
+      auto_block_on_critical: true
+      cve_data_source: osv.dev
+    halcon_metrics:
+      track_findings_by_severity: true
+      track_audit_duration: true
+
+  debugging-agent:
+    description: "Diagnoses failed or stalled migrations, performs RCA, produces remediation plans"
+    model: claude-opus-4-6
+    max_tokens: 8192
+    max_iterations: 15
+    temperature: 0.0
+    timeout_seconds: 1200
+    read_only: true
+    auto_recovery_confidence_threshold: 0.85
+    tool_access:
+      - file-system-tool
+      - api-client-tool
+      - validation-tool
+    context_servers:
+      - project-context
+      - runtime-context
+      - documentation-context
+    human_in_the_loop:
+      required_for:
+        - APPLY_REMEDIATION
+      confirmation_timeout_minutes: 60
+      on_timeout: REPORT_AND_WAIT
+    runbook_refs:
+      OOM: monitoring/runbooks/migration_stall.md
+      DB_DEADLOCK: monitoring/runbooks/migration_stall.md
+      SF_BULK_STALL: monitoring/runbooks/migration_stall.md
+      HIGH_ERROR_RATE: monitoring/runbooks/high_error_rate.md
+    feature_flags:
+      deep_log_analysis: true
+      kafka_dlq_inspection: true
+      salesforce_error_correlation: true
+    halcon_metrics:
+      track_rca_accuracy: true
+      track_time_to_diagnosis: true
+
+  documentation-agent:
+    description: "Looks up runbooks, procedures, and architecture documentation"
+    model: claude-sonnet-4-6
+    max_tokens: 2048
+    max_iterations: 5
+    temperature: 0.1
+    timeout_seconds: 180
+    tool_access:
+      - file-system-tool
+    context_servers:
+      - documentation-context
+    feature_flags:
+      semantic_search_enabled: true
+      runbook_lookup_enabled: true
+    halcon_metrics:
+      track_lookup_relevance: false
+
+# ---------------------------------------------------------------------------
+# Global Defaults
+# ---------------------------------------------------------------------------
+
+defaults:
+  temperature: 0.0
+  timeout_seconds: 300
+  log_level: INFO
+  structured_output: true
+  emit_trace_id: true
+  abort_on_unhandled_exception: true
+
+# ---------------------------------------------------------------------------
+# Model Registry
+# ---------------------------------------------------------------------------
+
+models:
+  claude-opus-4-6:
+    context_window: 200000
+    max_output_tokens: 8192
+    supports_tool_use: true
+    cost_tier: premium
+    use_for: [orchestration, complex_reasoning, rca]
+
+  claude-sonnet-4-6:
+    context_window: 200000
+    max_output_tokens: 8192
+    supports_tool_use: true
+    cost_tier: standard
+    use_for: [migration, validation, security, documentation]

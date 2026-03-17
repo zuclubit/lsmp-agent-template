@@ -1,0 +1,612 @@
+##############################################################################
+# azure-pipelines.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Azure DevOps pipeline — full CI/CD with stages, variable groups,
+#           approval gates, deployment environments, and artifact management
+##############################################################################
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    exclude:
+      - docs/**
+      - "*.md"
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  autoCancel: true
+
+variables:
+  - group: sfmigration-global           # Key Vault-linked variable group
+  - group: sfmigration-registry         # ACR credentials
+  - name: PYTHON_VERSION
+    value: "3.12"
+  - name: TF_VERSION
+    value: "1.7.5"
+  - name: IMAGE_MIGRATION
+    value: "sfmigration-worker"
+  - name: IMAGE_API
+    value: "sfmigration-api"
+  - name: IMAGE_TAG
+    value: "sha-$(Build.SourceVersion)"
+
+pool:
+  vmImage: "ubuntu-latest"
+
+resources:
+  repositories:
+    - repository: self
+      type: git
+      ref: $(Build.SourceBranch)
+
+stages:
+
+###############################################################################
+# STAGE 1 — Validate
+###############################################################################
+
+- stage: Validate
+  displayName: "Validate & Lint"
+  jobs:
+
+  - job: LintPython
+    displayName: "Python Lint & Type Check"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+          addToPath: true
+        displayName: Set up Python
+
+      - script: |
+          pip install --upgrade pip
+          pip install ruff black isort mypy
+        displayName: Install linting tools
+
+      - script: ruff check src/ tests/
+        displayName: Ruff lint
+
+      - script: black --check --diff src/ tests/
+        displayName: Black format check
+
+      - script: isort --check-only --diff src/ tests/
+        displayName: isort import order
+
+      - script: mypy src/ --ignore-missing-imports
+        displayName: mypy type check
+        continueOnError: true
+
+      - task: PublishBuildArtifacts@1
+        condition: always()
+        inputs:
+          pathToPublish: "."
+          artifactName: lint-results
+
+  - job: LintTerraform
+    displayName: "Terraform Validate"
+    steps:
+      - script: |
+          wget -q https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip
+          unzip terraform_$(TF_VERSION)_linux_amd64.zip -d /usr/local/bin/
+          terraform version
+        displayName: Install Terraform
+
+      - script: |
+          cd infrastructure/terraform
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
+        displayName: Terraform fmt + validate
+
+  - job: LintKubernetes
+    displayName: "Kubernetes Manifest Validation"
+    steps:
+      - script: |
+          curl -LO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/kubectl
+        displayName: Install kubectl
+
+      - script: |
+          kubectl apply --dry-run=client \
+            -f infrastructure/kubernetes/namespaces.yaml || true
+          for f in $(find infrastructure/kubernetes -name "*.yaml"); do
+            echo "Validating $f..."
+            kubectl apply --dry-run=client -f "$f" || true
+          done
+        displayName: Validate K8s manifests
+        continueOnError: true
+
+###############################################################################
+# STAGE 2 — Build
+###############################################################################
+
+- stage: Build
+  displayName: "Build Docker Images"
+  dependsOn: Validate
+  condition: succeeded()
+  jobs:
+
+  - job: BuildMigrationImage
+    displayName: "Build Migration Worker Image"
+    steps:
+      - task: Docker@2
+        displayName: Login to ACR
+        inputs:
+          command: login
+          containerRegistry: $(ACR_SERVICE_CONNECTION)
+
+      - task: Docker@2
+        displayName: Build migration-worker image
+        inputs:
+          command: buildAndPush
+          repository: $(IMAGE_MIGRATION)
+          dockerfile: infrastructure/docker/Dockerfile.migration
+          containerRegistry: $(ACR_SERVICE_CONNECTION)
+          tags: |
+            $(IMAGE_TAG)
+            $(Build.SourceBranchName)
+          buildContext: $(Build.SourcesDirectory)
+          arguments: >-
+            --build-arg BUILD_VERSION=$(IMAGE_TAG)
+            --build-arg GIT_COMMIT=$(Build.SourceVersion)
+            --build-arg BUILD_DATE=$(Build.BuildId)
+
+      - script: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.50.1 image \
+            --exit-code 0 \
+            --severity HIGH,CRITICAL \
+            --format table \
+            $(ACR_LOGIN_SERVER)/$(IMAGE_MIGRATION):$(IMAGE_TAG) || true
+        displayName: Trivy scan migration image
+        continueOnError: true
+
+  - job: BuildApiImage
+    displayName: "Build API Gateway Image"
+    steps:
+      - task: Docker@2
+        displayName: Login to ACR
+        inputs:
+          command: login
+          containerRegistry: $(ACR_SERVICE_CONNECTION)
+
+      - task: Docker@2
+        displayName: Build api-gateway image
+        inputs:
+          command: buildAndPush
+          repository: $(IMAGE_API)
+          dockerfile: infrastructure/docker/Dockerfile.api
+          containerRegistry: $(ACR_SERVICE_CONNECTION)
+          tags: |
+            $(IMAGE_TAG)
+            $(Build.SourceBranchName)
+          buildContext: $(Build.SourcesDirectory)
+          arguments: >-
+            --build-arg BUILD_VERSION=$(IMAGE_TAG)
+            --build-arg GIT_COMMIT=$(Build.SourceVersion)
+
+###############################################################################
+# STAGE 3 — Test
+###############################################################################
+
+- stage: Test
+  displayName: "Test"
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+
+  - job: UnitTests
+    displayName: "Unit Tests"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+        displayName: Set up Python
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt \
+                      -r requirements-api.txt \
+                      -r requirements-migration.txt \
+                      -r requirements-test.txt
+        displayName: Install dependencies
+
+      - script: |
+          python -m pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=xml:$(Build.ArtifactStagingDirectory)/coverage.xml \
+            --cov-report=html:$(Build.ArtifactStagingDirectory)/coverage-html \
+            --cov-fail-under=80 \
+            --junitxml=$(Build.ArtifactStagingDirectory)/test-results.xml \
+            -n auto
+        displayName: Run unit tests
+        env:
+          APP_ENV: test
+          LOG_LEVEL: ERROR
+
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: "$(Build.ArtifactStagingDirectory)/test-results.xml"
+          testRunTitle: "Unit Tests — $(Build.BuildNumber)"
+
+      - task: PublishCodeCoverageResults@2
+        inputs:
+          summaryFileLocation: "$(Build.ArtifactStagingDirectory)/coverage.xml"
+          reportDirectory: "$(Build.ArtifactStagingDirectory)/coverage-html"
+
+  - job: IntegrationTests
+    displayName: "Integration Tests"
+    steps:
+      - script: |
+          mkdir -p test-results
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            up --build \
+            --abort-on-container-exit \
+            --exit-code-from integration-tests \
+            --timeout 600
+        displayName: Run integration tests
+
+      - script: |
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            logs integration-tests > test-results/integration-logs.txt 2>&1 || true
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            down -v --remove-orphans
+        condition: always()
+        displayName: Cleanup and collect logs
+
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: "test-results/integration-results.xml"
+          testRunTitle: "Integration Tests — $(Build.BuildNumber)"
+
+      - task: PublishBuildArtifacts@1
+        condition: always()
+        inputs:
+          pathToPublish: test-results
+          artifactName: integration-test-results
+
+###############################################################################
+# STAGE 4 — Security
+###############################################################################
+
+- stage: Security
+  displayName: "Security Scanning"
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+
+  - job: SastBandit
+    displayName: "SAST — Bandit"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+      - script: |
+          pip install bandit[toml]
+          bandit -r src/ \
+            --severity-level medium \
+            --format json \
+            -o $(Build.ArtifactStagingDirectory)/bandit-results.json \
+            --exit-zero
+        displayName: Run Bandit
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: "$(Build.ArtifactStagingDirectory)/bandit-results.json"
+          artifactName: security-results
+        condition: always()
+
+  - job: DependencyAudit
+    displayName: "Dependency Vulnerability Audit"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt \
+                      -r requirements-api.txt \
+                      -r requirements-migration.txt
+          pip install pip-audit
+          pip-audit --format json \
+            -o $(Build.ArtifactStagingDirectory)/pip-audit-results.json \
+            --strict || true
+        displayName: pip-audit
+        continueOnError: true
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: "$(Build.ArtifactStagingDirectory)/pip-audit-results.json"
+          artifactName: security-results
+        condition: always()
+
+  - job: IaCCheckov
+    displayName: "IaC Scan — Checkov"
+    container: bridgecrew/checkov:3.2.0
+    steps:
+      - script: |
+          checkov -d infrastructure/terraform/ \
+            --framework terraform \
+            --output json \
+            --output-file $(Build.ArtifactStagingDirectory)/checkov-tf.json \
+            --soft-fail || true
+          checkov -d infrastructure/kubernetes/ \
+            --framework kubernetes \
+            --output json \
+            --output-file $(Build.ArtifactStagingDirectory)/checkov-k8s.json \
+            --soft-fail || true
+        displayName: Run Checkov
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: "$(Build.ArtifactStagingDirectory)"
+          artifactName: security-results
+        condition: always()
+
+###############################################################################
+# STAGE 5 — Deploy Staging
+###############################################################################
+
+- stage: DeployStaging
+  displayName: "Deploy to Staging"
+  dependsOn:
+    - Test
+    - Security
+  condition: |
+    and(
+      succeeded('Test'),
+      or(
+        eq(variables['Build.SourceBranch'], 'refs/heads/develop'),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    )
+  variables:
+    - group: sfmigration-staging
+  jobs:
+
+  - deployment: TerraformStaging
+    displayName: "Terraform Apply — Staging"
+    environment: staging
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - script: |
+                wget -q https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip
+                unzip terraform_$(TF_VERSION)_linux_amd64.zip -d /usr/local/bin/
+              displayName: Install Terraform
+
+            - task: AzureCLI@2
+              displayName: Terraform Init
+              inputs:
+                azureSubscription: $(AZURE_SERVICE_CONNECTION_STAGING)
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  cd infrastructure/terraform
+                  terraform init \
+                    -backend-config="key=sfmigration-staging.terraform.tfstate" \
+                    -reconfigure
+              env:
+                ARM_USE_OIDC: true
+
+            - task: AzureCLI@2
+              displayName: Terraform Plan
+              inputs:
+                azureSubscription: $(AZURE_SERVICE_CONNECTION_STAGING)
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  cd infrastructure/terraform
+                  terraform plan \
+                    -var-file="environments/staging/terraform.tfvars" \
+                    -var="subscription_id=$(ARM_SUBSCRIPTION_ID)" \
+                    -var="tenant_id=$(ARM_TENANT_ID)" \
+                    -out=tfplan.staging \
+                    -no-color | tee plan-output.txt
+              env:
+                ARM_USE_OIDC: true
+
+            - task: AzureCLI@2
+              displayName: Terraform Apply
+              inputs:
+                azureSubscription: $(AZURE_SERVICE_CONNECTION_STAGING)
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  cd infrastructure/terraform
+                  terraform apply -auto-approve tfplan.staging
+              env:
+                ARM_USE_OIDC: true
+
+  - deployment: KubernetesStaging
+    displayName: "K8s Deploy — Staging"
+    dependsOn: TerraformStaging
+    environment:
+      name: staging
+      resourceType: Kubernetes
+      tags: staging
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - task: KubernetesManifest@1
+              displayName: Deploy migration-worker
+              inputs:
+                action: deploy
+                namespace: $(NAMESPACE_STAGING)
+                manifests: infrastructure/kubernetes/deployments/migration-deployment.yaml
+                containers: |
+                  $(ACR_LOGIN_SERVER)/$(IMAGE_MIGRATION):$(IMAGE_TAG)
+
+            - task: KubernetesManifest@1
+              displayName: Deploy api-gateway
+              inputs:
+                action: deploy
+                namespace: $(NAMESPACE_STAGING)
+                manifests: infrastructure/kubernetes/deployments/api-deployment.yaml
+                containers: |
+                  $(ACR_LOGIN_SERVER)/$(IMAGE_API):$(IMAGE_TAG)
+
+            - script: |
+                kubectl rollout status deployment/migration-worker \
+                  -n $(NAMESPACE_STAGING) --timeout=600s
+                kubectl rollout status deployment/api-gateway \
+                  -n $(NAMESPACE_STAGING) --timeout=300s
+              displayName: Wait for rollouts
+
+  - job: SmokeTestsStaging
+    displayName: "Smoke Tests — Staging"
+    dependsOn: KubernetesStaging
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+      - script: |
+          pip install httpx pytest pytest-asyncio
+          python -m pytest tests/smoke/ -v -k "staging" \
+            --junitxml=$(Build.ArtifactStagingDirectory)/smoke-staging.xml
+        displayName: Run smoke tests
+        env:
+          STAGING_API_URL: $(STAGING_API_URL)
+          STAGING_API_TOKEN: $(STAGING_SMOKE_TEST_TOKEN)
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: "$(Build.ArtifactStagingDirectory)/smoke-staging.xml"
+          testRunTitle: "Smoke Tests Staging — $(Build.BuildNumber)"
+
+###############################################################################
+# STAGE 6 — Deploy Production
+###############################################################################
+
+- stage: DeployProd
+  displayName: "Deploy to Production"
+  dependsOn: DeployStaging
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  variables:
+    - group: sfmigration-prod
+  jobs:
+
+  - deployment: TerraformProd
+    displayName: "Terraform Apply — Production"
+    environment: production               # Requires manual approval in ADO
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - script: |
+                wget -q https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip
+                unzip terraform_$(TF_VERSION)_linux_amd64.zip -d /usr/local/bin/
+              displayName: Install Terraform
+
+            - task: AzureCLI@2
+              displayName: Terraform Init + Apply
+              inputs:
+                azureSubscription: $(AZURE_SERVICE_CONNECTION_PROD)
+                scriptType: bash
+                scriptLocation: inlineScript
+                inlineScript: |
+                  cd infrastructure/terraform
+                  terraform init \
+                    -backend-config="key=sfmigration-prod.terraform.tfstate" \
+                    -reconfigure
+                  terraform plan \
+                    -var-file="environments/prod/terraform.tfvars" \
+                    -var="subscription_id=$(ARM_SUBSCRIPTION_ID)" \
+                    -var="tenant_id=$(ARM_TENANT_ID)" \
+                    -out=tfplan.prod \
+                    -no-color
+                  terraform apply -auto-approve tfplan.prod
+              env:
+                ARM_USE_OIDC: true
+
+  - deployment: KubernetesProd
+    displayName: "K8s Blue-Green Deploy — Production"
+    dependsOn: TerraformProd
+    environment:
+      name: production
+      resourceType: Kubernetes
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+
+            - script: |
+                chmod +x ci-cd/scripts/deploy.sh
+                ci-cd/scripts/deploy.sh
+              displayName: Run deployment script
+              env:
+                ENVIRONMENT: prod
+                NAMESPACE: $(NAMESPACE_PROD)
+                IMAGE_TAG: $(IMAGE_TAG)
+                REGISTRY: $(ACR_LOGIN_SERVER)
+                DEPLOYMENT_TIMEOUT: "900"
+                BLUE_GREEN: "true"
+
+            - script: |
+                kubectl rollout status deployment/migration-worker \
+                  -n $(NAMESPACE_PROD) --timeout=900s
+                kubectl rollout status deployment/api-gateway \
+                  -n $(NAMESPACE_PROD) --timeout=300s
+              displayName: Verify rollouts
+
+  - job: SmokeTestsProd
+    displayName: "Smoke Tests — Production"
+    dependsOn: KubernetesProd
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+      - script: |
+          pip install httpx pytest pytest-asyncio pytest-retry
+          python -m pytest tests/smoke/ -v -k "production" \
+            --junitxml=$(Build.ArtifactStagingDirectory)/smoke-prod.xml \
+            --retries=5 --retry-delay=10
+        displayName: Run production smoke tests
+        env:
+          PROD_API_URL: $(PROD_API_URL)
+          PROD_API_TOKEN: $(PROD_SMOKE_TEST_TOKEN)
+      - task: PublishTestResults@2
+        condition: always()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: "$(Build.ArtifactStagingDirectory)/smoke-prod.xml"
+          testRunTitle: "Smoke Tests Production — $(Build.BuildNumber)"
+
+  - job: RollbackOnFailure
+    displayName: "Rollback if Smoke Tests Fail"
+    dependsOn: SmokeTestsProd
+    condition: failed()
+    steps:
+      - checkout: self
+      - script: |
+          chmod +x ci-cd/scripts/rollback.sh
+          ci-cd/scripts/rollback.sh
+        displayName: Execute rollback
+        env:
+          ENVIRONMENT: prod
+          NAMESPACE: $(NAMESPACE_PROD)
+          REASON: "Production smoke tests failed"

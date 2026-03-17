@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/skills/testing/v2.0.0",
+  "title": "TestingSkill",
+  "description": "Generates complete pytest test suites for migration pipeline components (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "ComponentType": {
+      "type": "string",
+      "enum": ["adapter", "validator", "transformer", "pipeline", "tool", "api_endpoint", "agent"],
+      "description": "Category of the component under test"
+    },
+    "TestType": {
+      "type": "string",
+      "enum": ["unit", "integration", "contract", "migration_validation"],
+      "description": "Type of test suite to generate"
+    },
+    "TestingInput": {
+      "type": "object",
+      "required": ["component_type", "source_code", "test_type"],
+      "additionalProperties": false,
+      "properties": {
+        "component_type": {
+          "$ref": "#/$defs/ComponentType"
+        },
+        "source_code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 131072,
+          "description": "The complete source code of the component to be tested"
+        },
+        "test_type": {
+          "$ref": "#/$defs/TestType"
+        },
+        "coverage_target_percent": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 80,
+          "description": "Desired line coverage target. Higher values cause more edge cases and branches to be exercised."
+        }
+      }
+    },
+    "TestingOutput": {
+      "type": "object",
+      "required": ["test_code", "test_file_path", "estimated_coverage", "test_count", "fixtures_required"],
+      "additionalProperties": false,
+      "properties": {
+        "test_code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Complete, runnable pytest test file content ready to save to disk"
+        },
+        "test_file_path": {
+          "type": "string",
+          "pattern": "^tests/",
+          "description": "Recommended file path relative to the repository root (e.g. tests/unit/agents/test_execution_agent.py)"
+        },
+        "estimated_coverage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Estimated line coverage percentage the generated tests will achieve"
+        },
+        "test_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total number of test functions (def test_*) in the generated file"
+        },
+        "fixtures_required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of pytest fixtures the generated tests depend on — must be present in conftest.py"
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "TestingSkill Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "$ref": "#/$defs/TestingInput",
+      "title": "TestingInput"
+    },
+    "output": {
+      "$ref": "#/$defs/TestingOutput",
+      "title": "TestingOutput"
+    }
+  },
+
+  "standard_fixtures": {
+    "description": "Standard fixtures available in conftest.py that generated tests may reference",
+    "fixtures": [
+      {
+        "name": "mock_migration_api",
+        "scope": "function",
+        "type": "AsyncMock",
+        "description": "AsyncMock wrapping the migration API HTTP client"
+      },
+      {
+        "name": "mock_sf_client",
+        "scope": "function",
+        "type": "AsyncMock",
+        "description": "AsyncMock wrapping the Salesforce API client"
+      },
+      {
+        "name": "db_session",
+        "scope": "function",
+        "type": "SQLAlchemy Session",
+        "description": "SQLAlchemy Session bound to test database — rolled back after each test"
+      },
+      {
+        "name": "test_tenant_id",
+        "scope": "session",
+        "type": "str",
+        "description": "Fixed tenant ID: test-tenant-001"
+      },
+      {
+        "name": "sample_migration_id",
+        "scope": "function",
+        "type": "str",
+        "description": "Freshly generated migration run UUID"
+      },
+      {
+        "name": "sample_job_id",
+        "scope": "function",
+        "type": "str",
+        "description": "Freshly generated job UUID"
+      },
+      {
+        "name": "mock_anthropic_client",
+        "scope": "function",
+        "type": "AsyncMock",
+        "description": "AsyncMock wrapping anthropic.AsyncAnthropic — prevents real API calls in tests"
+      }
+    ]
+  },
+
+  "coverage_minimums": {
+    "unit": 80,
+    "integration": 70,
+    "contract": null,
+    "migration_validation": null
+  },
+
+  "test_file_naming_conventions": {
+    "unit": "tests/unit/{module_path}/test_{source_file}.py",
+    "integration": "tests/integration/{domain}/test_{scenario}.py",
+    "contract": "tests/contracts/{service_name}/test_{contract_name}.py",
+    "migration_validation": "tests/migration_validation/{entity}/test_post_migration_{entity}.py"
+  },
+
+  "examples": [
+    {
+      "input": {
+        "component_type": "agent",
+        "source_code": "# agents/execution_agent/agent.py content here...",
+        "test_type": "unit",
+        "coverage_target_percent": 90
+      },
+      "output": {
+        "test_code": "\"\"\"Unit tests for ExecutionAgent.\"\"\"\nimport pytest\nfrom unittest.mock import AsyncMock, patch\n\n\n@pytest.mark.asyncio\nasync def test_execute_blocked_when_destructive_without_operator(\n    sample_migration_id: str,\n) -> None:\n    from agents.execution_agent.agent import execute_single_step, PlanStep, StepStatus\n    result = await execute_single_step(\n        plan_step=PlanStep(\n            step_id=\"test-step-001\",\n            step_type=\"bulk_delete\",\n            entity_name=\"Account\",\n            phase=\"loading\",\n            sequence_number=1,\n            is_destructive=True,\n        ),\n        migration_id=sample_migration_id,\n        tenant_id=\"test-tenant-001\",\n        operator_id=None,\n    )\n    assert result.status == StepStatus.BLOCKED\n",
+        "test_file_path": "tests/unit/agents/test_execution_agent.py",
+        "estimated_coverage": 88,
+        "test_count": 12,
+        "fixtures_required": ["sample_migration_id", "test_tenant_id", "mock_anthropic_client"]
+      }
+    }
+  ]
+}

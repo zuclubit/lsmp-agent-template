@@ -1,0 +1,191 @@
+# Halcon Configuration — Agent Session Tracking
+# Version: 2.0
+#
+# Halcon records retrospective metrics for every agent session.
+# Metrics drive continuous improvement of agent prompts, tool selection,
+# and workflow routing decisions.
+
+halcon:
+  version: "2.0"
+  enabled: true
+  environment: "${HALCON_ENVIRONMENT:-production}"
+  cluster_id: "${HALCON_CLUSTER_ID}"
+
+  # ---------------------------------------------------------------------------
+  # Session Storage
+  # ---------------------------------------------------------------------------
+
+  retrospectives_path: ".halcon/retrospectives/sessions.jsonl"
+  session_store: ".halcon/retrospectives/sessions.jsonl"
+
+  session_export:
+    format: jsonl
+    rotation: daily
+    retention_days: 90
+    compress_after_days: 7
+    archive_path: ".halcon/retrospectives/archive/"
+
+  # ---------------------------------------------------------------------------
+  # Session Metrics
+  # ---------------------------------------------------------------------------
+
+  metrics:
+    convergence_efficiency:
+      description: "How quickly agent reaches correct decision — ratio of useful tokens to total"
+      type: gauge
+      range: [0.0, 1.0]
+      target: "> 0.7"
+      threshold_warn: 0.7
+      threshold_critical: 0.4
+      action_on_critical: "Alert team lead, flag session for review"
+
+    decision_density:
+      description: "Decisions made per iteration (higher = more focused agent)"
+      type: gauge
+      range: [0.0, 1.0]
+      target: "0.3 - 0.7"
+      target_min: 0.3
+      target_max: 0.7
+      threshold_warn_low: 0.2
+      threshold_warn_high: 0.8
+      note: "Too low = agent is spinning; too high = agent is skipping analysis"
+
+    adaptation_utilization:
+      description: "Fraction of iterations where agent changed course"
+      type: gauge
+      range: [0.0, 1.0]
+      target: "0.2 - 0.6"
+      threshold_warn: 0.6
+      threshold_critical: 0.8
+      note: "High adaptation = agent is oscillating; may indicate unclear instructions"
+
+    dominant_failure_mode:
+      description: "Most common failure type in session"
+      type: label
+      known_values:
+        - SF_BULK_TIMEOUT
+        - KAFKA_CONSUMER_DEATH
+        - DB_CONNECTION_EXHAUSTION
+        - SVID_EXPIRY
+        - DATA_QUALITY_SYSTEMATIC
+        - SCHEMA_DRIFT
+        - PERMISSION_DENIED
+        - GATE_BLOCKED
+        - HUMAN_TIMEOUT
+        - CIRCUIT_OPEN
+
+    evidence_trajectory:
+      description: "Shape of evidence accumulation across iterations"
+      type: enum
+      values: [monotonic, oscillating, plateaued]
+      preferred: monotonic
+      note: "Oscillating suggests contradictory tool outputs or unclear task"
+
+    final_utility:
+      description: "Overall session usefulness (0-1) — was the session goal achieved?"
+      type: gauge
+      range: [0.0, 1.0]
+      target: "> 0.8"
+      threshold_warn: 0.6
+      threshold_critical: 0.4
+
+  # ---------------------------------------------------------------------------
+  # Pipeline Metrics (emitted during migration execution)
+  # ---------------------------------------------------------------------------
+
+  pipeline_metrics:
+    records_migrated_total:
+      type: counter
+      description: "Total records successfully migrated"
+    records_failed_total:
+      type: counter
+      description: "Total records that failed migration"
+    dlq_depth:
+      type: gauge
+      description: "Current DLQ depth"
+      threshold_warn: 10
+      threshold_critical: 100
+    kafka_consumer_lag:
+      type: gauge
+      description: "Kafka consumer group lag"
+      threshold_warn: 1000
+      threshold_critical: 10000
+    salesforce_api_calls_remaining:
+      type: gauge
+      description: "Salesforce daily API calls remaining"
+      threshold_warn_pct: 30
+      threshold_critical_pct: 10
+    chunk_processing_duration_seconds:
+      type: histogram
+      buckets: [1, 5, 10, 30, 60, 120, 300]
+
+  # ---------------------------------------------------------------------------
+  # Emit Events
+  # ---------------------------------------------------------------------------
+
+  emit_on:
+    - orchestration_complete
+    - validation_gate_fired
+    - validation_gate_blocked
+    - security_audit_complete
+    - execution_complete
+    - execution_rollback
+    - debugging_analysis_complete
+    - human_approval_requested
+    - human_approval_received
+    - circuit_breaker_opened
+    - rate_limit_exceeded
+
+  # ---------------------------------------------------------------------------
+  # Known Failure Modes
+  # ---------------------------------------------------------------------------
+
+  dominant_failure_modes:
+    - SF_BULK_TIMEOUT
+    - KAFKA_CONSUMER_DEATH
+    - DB_CONNECTION_EXHAUSTION
+    - SVID_EXPIRY
+    - DATA_QUALITY_SYSTEMATIC
+    - SCHEMA_DRIFT
+    - PERMISSION_DENIED
+    - GATE_BLOCKED
+    - HUMAN_TIMEOUT
+    - CIRCUIT_OPEN
+
+  # ---------------------------------------------------------------------------
+  # Alerting
+  # ---------------------------------------------------------------------------
+
+  alerting:
+    enabled: true
+    channels:
+      - type: pagerduty
+        integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+        severity_threshold: critical
+      - type: slack
+        webhook_url: "${SLACK_HALCON_WEBHOOK}"
+        channel: "#migration-halcon"
+        severity_threshold: warn
+    alert_on_metrics:
+      - metric: convergence_efficiency
+        condition: "< threshold_critical"
+      - metric: final_utility
+        condition: "< threshold_critical"
+      - metric: dlq_depth
+        condition: "> threshold_critical"
+
+  # ---------------------------------------------------------------------------
+  # Retrospective Analysis
+  # ---------------------------------------------------------------------------
+
+  retrospective_analysis:
+    auto_analyze_after_session: true
+    flag_for_human_review_if:
+      - "final_utility < 0.4"
+      - "adaptation_utilization > 0.8"
+      - "evidence_trajectory == oscillating AND final_utility < 0.6"
+      - "convergence_efficiency < 0.4"
+    weekly_summary:
+      enabled: true
+      send_to: "${TEAM_LEAD_EMAIL}"
+      include_metrics: [convergence_efficiency, decision_density, final_utility, dominant_failure_mode]

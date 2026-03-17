@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/schemas/debugging-agent/v1.1.0",
+  "title": "DebuggingAgent",
+  "description": "Input and output schemas for the Migration Debugging Agent (API v1.1.0, READ-ONLY)",
+  "version": "1.1.0",
+
+  "$defs": {
+    "RootCauseCategory": {
+      "type": "string",
+      "enum": [
+        "OOM",
+        "DB_DEADLOCK",
+        "SF_BULK_STALL",
+        "KAFKA_LAG",
+        "NETWORK_TIMEOUT",
+        "DATA_QUALITY",
+        "UNKNOWN"
+      ],
+      "description": "Root cause category enum for migration failures"
+    },
+    "RootCauseAnalysis": {
+      "type": "object",
+      "required": [
+        "analysis_id",
+        "job_id",
+        "tenant_id",
+        "root_cause_category",
+        "confidence",
+        "evidence",
+        "recommended_fix",
+        "auto_recoverable",
+        "estimated_recovery_minutes",
+        "runbook_reference"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "analysis_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique analysis identifier"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "root_cause_category": {
+          "$ref": "#/$defs/RootCauseCategory"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Confidence in root cause determination. Must be > 0.85 for auto-recovery signalling."
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "Specific evidence items, each citing the source tool and observed value"
+        },
+        "recommended_fix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Specific, actionable remediation steps"
+        },
+        "auto_recoverable": {
+          "type": "boolean",
+          "description": "True when the issue can be resolved automatically. Requires confidence > 0.85 for auto-recovery signalling."
+        },
+        "recovery_action": {
+          "type": ["string", "null"],
+          "description": "Specific recovery action for the orchestrator. Required when auto_recoverable=true."
+        },
+        "estimated_recovery_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Estimated time for the recovery action to complete in minutes"
+        },
+        "runbook_reference": {
+          "type": "string",
+          "description": "Reference to the relevant runbook file and section (e.g. migration_stall.md#oom-recovery)"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "DebuggingAgent Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "DebuggingAgentInput",
+      "description": "Request payload for the Debugging Agent",
+      "required": [
+        "job_id",
+        "tenant_id",
+        "failed_step_id",
+        "failed_step_type",
+        "failure_report"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration job identifier"
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Multi-tenant identifier"
+        },
+        "failed_step_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "UUID of the step that failed"
+        },
+        "failed_step_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Step type that failed (e.g. LOAD, EXTRACT, TRANSFORM)"
+        },
+        "failure_report": {
+          "type": "object",
+          "description": "FailureReport dict from the execution-agent",
+          "required": ["error_message"],
+          "properties": {
+            "error_message": { "type": "string" },
+            "failure_category": { "type": "string" },
+            "failed_step_type": { "type": "string" },
+            "records_processed_before_failure": { "type": "integer" }
+          }
+        },
+        "namespace": {
+          "type": "string",
+          "default": "migration",
+          "description": "Kubernetes namespace for pod diagnostics"
+        },
+        "service_names": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Service names to collect logs from"
+        },
+        "kafka_consumer_groups": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Kafka consumer group IDs to check for lag"
+        },
+        "salesforce_bulk_job_id": {
+          "type": ["string", "null"],
+          "description": "Salesforce Bulk API 2.0 job ID (for SF_BULK_STALL diagnosis)"
+        },
+        "since_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1440,
+          "default": 30,
+          "description": "Log lookback window in minutes"
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "title": "DebuggingAgentResult",
+      "description": "Result returned by the Debugging Agent",
+      "required": [
+        "analysis_id",
+        "job_id",
+        "tenant_id",
+        "success",
+        "auto_recovery_signalled",
+        "duration_ms",
+        "completed_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "analysis_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "job_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "success": {
+          "type": "boolean",
+          "description": "True when root cause analysis completed successfully"
+        },
+        "analysis": {
+          "oneOf": [
+            { "$ref": "#/$defs/RootCauseAnalysis" },
+            { "type": "null" }
+          ],
+          "description": "The RootCauseAnalysis; null on API failure"
+        },
+        "auto_recovery_signalled": {
+          "type": "boolean",
+          "description": "True when auto_recoverable=true AND confidence > 0.85 — orchestrator should execute recovery_action"
+        },
+        "recovery_action": {
+          "type": ["string", "null"],
+          "description": "Recovery action to execute; populated when auto_recovery_signalled=true"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error description; required when success=false"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "halcon_metrics": {
+          "type": "object"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+
+  "read_only_tools": [
+    {
+      "name": "read_logs",
+      "description": "Read service logs (READ-ONLY)",
+      "parameters": ["service", "since_minutes", "level_filter", "search_pattern"]
+    },
+    {
+      "name": "get_pod_status",
+      "description": "Get Kubernetes pod status (READ-ONLY)",
+      "parameters": ["namespace", "label_selector"]
+    },
+    {
+      "name": "get_db_blocking_queries",
+      "description": "Get database blocking queries (READ-ONLY)",
+      "parameters": ["min_wait_seconds", "include_query_text"]
+    },
+    {
+      "name": "get_kafka_consumer_lag",
+      "description": "Get Kafka consumer group lag (READ-ONLY)",
+      "parameters": ["group_id", "topic_filter"]
+    },
+    {
+      "name": "get_salesforce_bulk_job_status",
+      "description": "Get Salesforce Bulk API 2.0 job status (READ-ONLY)",
+      "parameters": ["bulk_job_id", "include_failed_records"]
+    }
+  ],
+
+  "auto_recovery_rule": {
+    "description": "Auto-recovery is only signalled when ALL conditions are true",
+    "conditions": [
+      "analysis.auto_recoverable = true",
+      "analysis.confidence > 0.85",
+      "analysis.recovery_action is not null"
+    ]
+  },
+
+  "examples": [
+    {
+      "input": {
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "failed_step_id": "11111111-0000-0000-0000-000000000006",
+        "failed_step_type": "LOAD",
+        "failure_report": {
+          "error_message": "java.lang.OutOfMemoryError: Java heap space",
+          "failure_category": "API_ERROR",
+          "records_processed_before_failure": 450000
+        },
+        "namespace": "migration",
+        "service_names": ["migration-worker"],
+        "kafka_consumer_groups": [],
+        "salesforce_bulk_job_id": null,
+        "since_minutes": 30
+      },
+      "output": {
+        "analysis_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab",
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "success": true,
+        "analysis": {
+          "analysis_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab",
+          "job_id": "job-acme-2026-001",
+          "tenant_id": "tenant-acme",
+          "root_cause_category": "OOM",
+          "confidence": 0.95,
+          "evidence": [
+            "read_logs(migration-worker): java.lang.OutOfMemoryError: Java heap space at 2026-03-20T04:47:22Z",
+            "get_pod_status(migration, app=migration-worker): pod migration-worker-7d4b9c terminated with reason=OOMKilled, restartCount=2",
+            "read_logs(migration-worker): GC overhead limit exceeded logged 47 times in the 30-minute window"
+          ],
+          "recommended_fix": "Increase JVM heap size for migration-worker pod from 4Gi to 8Gi. Set -Xmx7g in JAVA_OPTS. Reduce batch_size from 5000 to 2000 to lower peak memory usage. Refer to migration_stall.md#oom-recovery.",
+          "auto_recoverable": true,
+          "recovery_action": "restart_migration_worker_with_increased_memory: set resources.limits.memory=8Gi, JAVA_OPTS=-Xmx7g",
+          "estimated_recovery_minutes": 10,
+          "runbook_reference": "migration_stall.md#oom-recovery",
+          "created_at": "2026-03-20T05:00:00Z"
+        },
+        "auto_recovery_signalled": true,
+        "recovery_action": "restart_migration_worker_with_increased_memory: set resources.limits.memory=8Gi, JAVA_OPTS=-Xmx7g",
+        "error": null,
+        "duration_ms": 8420,
+        "tokens_used": 4210,
+        "halcon_metrics": {
+          "final_utility": 0.95,
+          "root_cause_category": "OOM",
+          "confidence": 0.95
+        },
+        "completed_at": "2026-03-20T05:00:08Z"
+      }
+    }
+  ]
+}

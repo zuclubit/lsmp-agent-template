@@ -1,0 +1,1560 @@
+openapi: "3.0.3"
+
+info:
+  title: Legacy-to-Salesforce Migration Platform API
+  version: "1.4.0"
+  description: |
+    REST API for the Legacy-to-Salesforce Migration Platform. Provides full lifecycle
+    management of migration jobs including creation, monitoring, control operations,
+    validation, and reporting.
+
+    ## Authentication
+
+    All endpoints require authentication. Two schemes are supported:
+
+    1. **OAuth 2.0 Client Credentials** — Recommended for service-to-service integrations
+       and automated pipelines. Obtain a token from the token endpoint using client credentials.
+
+    2. **API Key** — Suitable for read-only monitoring integrations. Pass the API key
+       in the `X-API-Key` header. API keys are scoped to a single tenant and cannot
+       perform write operations.
+
+    ## Rate Limiting
+
+    API endpoints are rate-limited per tenant:
+    - GET endpoints: 300 req/min
+    - POST/mutating endpoints: 60 req/min
+
+    The following headers are returned on every response:
+    - `X-RateLimit-Limit` — Maximum requests per minute for this endpoint
+    - `X-RateLimit-Remaining` — Remaining requests in the current window
+    - `X-RateLimit-Reset` — UTC epoch timestamp when the limit resets
+
+    ## Versioning
+
+    The API is versioned via URL path (`/api/v1/`). Breaking changes result in a new version.
+    Deprecated endpoints are supported for 12 months after deprecation notice.
+
+    ## Idempotency
+
+    POST endpoints accept an `Idempotency-Key` header (UUID v4). If a request with the same
+    key was received within 24 hours, the original response is returned without re-executing.
+    Use this for pause/resume/rollback to prevent double-execution.
+
+  contact:
+    name: Migration Platform Engineering
+    email: migration-platform@enterprise.org
+    url: https://docs.migration-platform.internal
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: https://api.migration.internal/api/v1
+    description: Production
+  - url: https://api-staging.migration.internal/api/v1
+    description: Staging
+  - url: https://api-dev.migration.internal/api/v1
+    description: Development
+  - url: http://localhost:8080/api/v1
+    description: Local Development
+
+tags:
+  - name: migrations
+    description: Migration job creation and status
+  - name: control
+    description: Migration job control operations — pause, resume, rollback
+  - name: reports
+    description: Migration completion reports and validation results
+  - name: health
+    description: Platform health and Kubernetes readiness probes
+  - name: metrics
+    description: Prometheus-compatible metrics endpoint
+
+security:
+  - OAuth2ClientCredentials:
+      - migrations:read
+      - migrations:write
+
+components:
+
+  securitySchemes:
+    OAuth2ClientCredentials:
+      type: oauth2
+      flows:
+        clientCredentials:
+          tokenUrl: https://auth.migration-platform.internal/oauth/token
+          scopes:
+            migrations:read: Read migration jobs, reports, and validation results
+            migrations:write: Create and control migration jobs
+            migrations:admin: Administrative operations — tenant management, configuration
+            metrics:read: Read platform metrics
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Tenant-scoped API key for read-only monitoring integrations.
+        Issued per tenant via the platform admin UI. Cannot perform write operations.
+
+  parameters:
+    MigrationIdParam:
+      name: migrationId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Migration job ID
+      example: mig-20251201-a3f8b2c1
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error_code, message, request_id, timestamp]
+      properties:
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Field 'source.entities' must contain at least one entry"
+        request_id:
+          type: string
+          format: uuid
+          example: "a3f8b2c1-dead-beef-cafe-000000000001"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-12-01T22:00:00.000Z"
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+                example: source.entities
+              message:
+                type: string
+                example: "At least one source entity is required"
+
+    MigrationStatus:
+      type: string
+      enum:
+        - DRAFT
+        - VALIDATING
+        - READY
+        - STARTING
+        - RUNNING
+        - PAUSED
+        - COMPLETING
+        - COMPLETED
+        - FAILED
+        - ROLLING_BACK
+        - ROLLED_BACK
+        - CANCELLED
+      description: |
+        Migration job state machine transitions:
+        DRAFT → VALIDATING → READY → STARTING → RUNNING → COMPLETING → COMPLETED
+        RUNNING → PAUSED → RUNNING (via resume)
+        RUNNING|PAUSED|COMPLETED|FAILED → ROLLING_BACK → ROLLED_BACK
+        RUNNING → FAILED
+
+    MigrationPhase:
+      type: object
+      required: [name, status, records_total, records_processed, records_failed]
+      properties:
+        name:
+          type: string
+          enum: [EXTRACTION, TRANSFORMATION, VALIDATION, LOADING]
+        status:
+          type: string
+          enum: [PENDING, RUNNING, PAUSED, COMPLETED, FAILED]
+        records_total:
+          type: integer
+          format: int64
+          example: 2847391
+        records_processed:
+          type: integer
+          format: int64
+          example: 2023847
+        records_failed:
+          type: integer
+          format: int64
+          example: 8471
+        throughput_per_minute:
+          type: number
+          format: double
+          description: Current records processed per minute
+          example: 4212.3
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-12-01T22:00:05Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        estimated_completion:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-12-02T14:30:00Z"
+
+    MigrationSourceConfig:
+      type: object
+      required: [system_type, connection_name, entities]
+      properties:
+        system_type:
+          type: string
+          enum: [ORACLE_EBS, SQL_SERVER, SAP_HANA, POSTGRESQL, MYSQL, CSV_FILES, CUSTOM_JDBC]
+          example: ORACLE_EBS
+        connection_name:
+          type: string
+          description: Pre-configured connection name; credentials stored in HashiCorp Vault
+          example: oracle-ebs-prod-r2
+        entities:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [entity_name, rule_set_id]
+            properties:
+              entity_name:
+                type: string
+                example: HZ_PARTIES
+              rule_set_id:
+                type: string
+                description: Transformation rule set ID to apply to this entity
+                example: oracle-ebs-to-sf-account-v3
+              filter_expression:
+                type: string
+                description: Optional SQL WHERE clause to filter source records
+                example: "PARTY_TYPE = 'ORGANIZATION' AND STATUS = 'A'"
+              estimated_records:
+                type: integer
+                format: int64
+                example: 1500000
+
+    MigrationTargetConfig:
+      type: object
+      required: [salesforce_connection_name, objects]
+      properties:
+        salesforce_connection_name:
+          type: string
+          description: Pre-configured Salesforce org connection name
+          example: acme-corp-sf-prod
+        api_version:
+          type: string
+          description: Salesforce API version to use for Bulk API 2.0 operations
+          default: "62.0"
+          example: "62.0"
+        bulk_api_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 10
+          description: Number of concurrent Salesforce Bulk API jobs (max 15 per org)
+        objects:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [object_name, operation, external_id_field]
+            properties:
+              object_name:
+                type: string
+                example: Account
+              operation:
+                type: string
+                enum: [INSERT, UPDATE, UPSERT, DELETE]
+                default: UPSERT
+              external_id_field:
+                type: string
+                description: Salesforce field used as the upsert key (must exist and be indexed)
+                example: Legacy_ID__c
+              assignment_rule_id:
+                type: string
+                nullable: true
+                description: Optional Salesforce assignment rule ID to apply on insert
+
+    CreateMigrationRequest:
+      type: object
+      required: [name, tenant_id, source, target]
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 100
+          example: "Acme Corp - Oracle EBS to Salesforce - Phase 1"
+        description:
+          type: string
+          maxLength: 2000
+          example: "Migrating Customer and Contact data from Oracle EBS R12 to Salesforce Sales Cloud"
+        tenant_id:
+          type: string
+          description: Client tenant identifier — must match an existing provisioned tenant
+          example: ent-acme-corp
+        source:
+          $ref: '#/components/schemas/MigrationSourceConfig'
+        target:
+          $ref: '#/components/schemas/MigrationTargetConfig'
+        schedule:
+          type: object
+          properties:
+            start_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: Scheduled start time. Null means manual start via the start endpoint.
+              example: "2025-12-01T22:00:00Z"
+            maintenance_windows:
+              type: array
+              description: |
+                Daily time windows during which loading to Salesforce is permitted.
+                Extraction and transformation run continuously; loading pauses outside windows.
+              items:
+                type: object
+                properties:
+                  start_utc:
+                    type: string
+                    description: Window start time (HH:MM UTC)
+                    example: "22:00"
+                  end_utc:
+                    type: string
+                    description: Window end time (HH:MM UTC)
+                    example: "06:00"
+        options:
+          type: object
+          properties:
+            error_threshold_pct:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 100
+              default: 2.0
+              description: Auto-pause if DLQ error rate exceeds this percentage of total records
+            enable_ai_triage:
+              type: boolean
+              default: true
+              description: |
+                Enable AI-assisted DLQ triage (requires Data Privacy Review approval;
+                PII is masked before any AI API calls)
+            notification_emails:
+              type: array
+              items:
+                type: string
+                format: email
+              description: Email addresses for completion and failure notifications
+            tags:
+              type: object
+              additionalProperties:
+                type: string
+              description: Arbitrary key-value metadata for filtering and reporting
+              example:
+                project: crm-modernization-q4-2025
+                change_ticket: CHG-4821
+
+    Migration:
+      type: object
+      required: [migration_id, name, tenant_id, status, created_at, updated_at]
+      properties:
+        migration_id:
+          type: string
+          example: mig-20251201-a3f8b2c1
+        name:
+          type: string
+          example: "Acme Corp - Oracle EBS to Salesforce - Phase 1"
+        description:
+          type: string
+          nullable: true
+        tenant_id:
+          type: string
+          example: ent-acme-corp
+        status:
+          $ref: '#/components/schemas/MigrationStatus'
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-12-01T20:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-12-01T22:14:37Z"
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-12-01T22:00:03Z"
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        estimated_completion:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-12-02T14:30:00Z"
+        phases:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationPhase'
+        totals:
+          type: object
+          properties:
+            records_expected:
+              type: integer
+              format: int64
+              example: 2847391
+            records_extracted:
+              type: integer
+              format: int64
+              example: 2847391
+            records_transformed:
+              type: integer
+              format: int64
+              example: 2789044
+            records_loaded:
+              type: integer
+              format: int64
+              example: 2023847
+            records_rejected:
+              type: integer
+              format: int64
+              example: 58347
+            records_in_dlq:
+              type: integer
+              format: int64
+              example: 847
+            success_rate_pct:
+              type: number
+              format: double
+              example: 97.85
+        source:
+          $ref: '#/components/schemas/MigrationSourceConfig'
+        target:
+          $ref: '#/components/schemas/MigrationTargetConfig'
+        created_by:
+          type: string
+          format: email
+          example: data-team@acme.com
+        _links:
+          type: object
+          properties:
+            self:
+              type: string
+              format: uri
+              example: /api/v1/migrations/mig-20251201-a3f8b2c1
+            report:
+              type: string
+              format: uri
+              example: /api/v1/migrations/mig-20251201-a3f8b2c1/report
+            validation:
+              type: string
+              format: uri
+              example: /api/v1/migrations/mig-20251201-a3f8b2c1/validation
+
+    MigrationReport:
+      type: object
+      properties:
+        report_id:
+          type: string
+          format: uuid
+          example: "rpt-a3f8b2c1-dead-beef"
+        migration_id:
+          type: string
+          example: mig-20251201-a3f8b2c1
+        generated_at:
+          type: string
+          format: date-time
+          example: "2025-12-02T14:35:00Z"
+        summary:
+          type: object
+          properties:
+            total_records_migrated:
+              type: integer
+              format: int64
+              example: 2789044
+            total_records_rejected:
+              type: integer
+              format: int64
+              example: 58347
+            rejection_rate_pct:
+              type: number
+              format: double
+              example: 2.05
+            migration_duration_seconds:
+              type: integer
+              example: 59697
+            average_throughput_records_per_sec:
+              type: number
+              format: double
+              example: 46.7
+            data_quality_score:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 100
+              description: Composite data quality score (0-100)
+              example: 94.3
+        phase_summaries:
+          type: array
+          items:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: [EXTRACTION, TRANSFORMATION, VALIDATION, LOADING]
+              records_in:
+                type: integer
+                format: int64
+              records_out:
+                type: integer
+                format: int64
+              records_failed:
+                type: integer
+                format: int64
+              duration_seconds:
+                type: integer
+        rejection_analysis:
+          type: object
+          description: Rejection counts and percentages by error code
+          additionalProperties:
+            type: object
+            properties:
+              count:
+                type: integer
+                format: int64
+              percentage:
+                type: number
+                format: double
+              description:
+                type: string
+          example:
+            REQUIRED_FIELD_NULL_Name:
+              count: 41203
+              percentage: 1.45
+              description: "Account Name was null after transformation"
+            QUALITY_CHECK_FAILED:
+              count: 12891
+              percentage: 0.45
+              description: "One or more data quality checks failed"
+        field_quality_analysis:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              null_rate_pct:
+                type: number
+                format: double
+              invalid_rate_pct:
+                type: number
+                format: double
+              truncated_count:
+                type: integer
+                format: int64
+          example:
+            Phone:
+              null_rate_pct: 14.7
+              invalid_rate_pct: 8.4
+              truncated_count: 0
+            BillingStreet:
+              null_rate_pct: 3.1
+              invalid_rate_pct: 0.1
+              truncated_count: 2847
+        download_urls:
+          type: object
+          properties:
+            pdf:
+              type: string
+              format: uri
+              nullable: true
+              example: "https://reports.migration-platform.internal/jobs/mig-20251201-a3f8b2c1/report.pdf?sig=..."
+            html:
+              type: string
+              format: uri
+              nullable: true
+            csv_rejected_records:
+              type: string
+              format: uri
+              nullable: true
+              description: Pre-signed URL for rejected records CSV; expires after 24 hours
+
+    ValidationResult:
+      type: object
+      properties:
+        validation_id:
+          type: string
+          format: uuid
+        migration_id:
+          type: string
+        validated_at:
+          type: string
+          format: date-time
+        overall_status:
+          type: string
+          enum: [PASSED, PASSED_WITH_WARNINGS, FAILED]
+        gates:
+          type: array
+          items:
+            type: object
+            required: [gate_id, name, status]
+            properties:
+              gate_id:
+                type: string
+                example: gate2_target_validity
+              name:
+                type: string
+                example: "Target Validity"
+              status:
+                type: string
+                enum: [PASSED, PASSED_WITH_WARNINGS, FAILED, SKIPPED]
+              checks:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    check_id:
+                      type: string
+                      example: required_fields_populated
+                    description:
+                      type: string
+                      example: "Required Salesforce fields are non-null after transformation"
+                    status:
+                      type: string
+                      enum: [PASSED, FAILED, WARNING, SKIPPED]
+                    actual_value:
+                      type: string
+                      example: "99.99%"
+                    expected_value:
+                      type: string
+                      example: ">99%"
+                    severity:
+                      type: string
+                      enum: [ERROR, WARNING, INFO]
+
+    HealthStatus:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+          example: "1.4.0"
+        commit_sha:
+          type: string
+          example: "a3f8b2c"
+        components:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [healthy, degraded, unhealthy]
+              latency_ms:
+                type: integer
+                nullable: true
+              message:
+                type: string
+                nullable: true
+
+    ErrorResponse:
+      type: object
+      required: [error_code, message, request_id, timestamp]
+      properties:
+        error_code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: "Request validation failed"
+        request_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: VALIDATION_ERROR
+            message: "Request validation failed"
+            request_id: "a3f8b2c1-dead-beef-cafe-000000000001"
+            timestamp: "2025-12-01T22:00:00.000Z"
+            details:
+              - field: source.entities
+                message: "At least one source entity is required"
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: UNAUTHORIZED
+            message: "Valid authentication credentials required"
+            request_id: "b4e9c3d2-dead-beef-cafe-000000000002"
+            timestamp: "2025-12-01T22:00:00.000Z"
+    Forbidden:
+      description: Authenticated but not authorized for this operation or tenant
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: FORBIDDEN
+            message: "scope 'migrations:write' required for this operation"
+            request_id: "c5f0d4e3-dead-beef-cafe-000000000003"
+            timestamp: "2025-12-01T22:00:00.000Z"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: NOT_FOUND
+            message: "Migration job mig-99999999-notfound not found"
+            request_id: "d6a1e5f4-dead-beef-cafe-000000000004"
+            timestamp: "2025-12-01T22:00:00.000Z"
+    Conflict:
+      description: Operation conflicts with current resource state
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: INVALID_STATE_TRANSITION
+            message: "Cannot pause a migration in COMPLETED state"
+            request_id: "e7b2f6a5-dead-beef-cafe-000000000005"
+            timestamp: "2025-12-01T22:00:00.000Z"
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Number of seconds to wait before retrying
+          example: 12
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: RATE_LIMIT_EXCEEDED
+            message: "Rate limit of 60 requests/minute exceeded for POST endpoints"
+            request_id: "f8c3a7b6-dead-beef-cafe-000000000006"
+            timestamp: "2025-12-01T22:00:00.000Z"
+
+paths:
+
+  /migrations:
+    post:
+      tags: [migrations]
+      operationId: createMigration
+      summary: Create a new migration job
+      description: |
+        Creates a new migration job and runs pre-migration validation checks asynchronously.
+
+        The job is created in `VALIDATING` state and transitions to:
+        - `READY` — all pre-checks passed; awaiting manual start or scheduled start time
+        - `FAILED` — a critical pre-check failed (connectivity, missing external ID field, etc.)
+
+        Pre-checks performed automatically:
+        - Source system connectivity and read permissions
+        - Salesforce org connectivity and Bulk API permissions
+        - Transformation rule set existence and approval status
+        - Salesforce picklist mapping completeness
+        - External ID field existence and API name verification
+        - Kubernetes ResourceQuota headroom for tenant namespace
+        - Vault credential availability for all required secrets
+
+        Poll `GET /api/v1/migrations/{migrationId}` to track state transition out of VALIDATING.
+        Typical pre-check duration: 30–120 seconds.
+      security:
+        - OAuth2ClientCredentials: [migrations:write]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: Idempotency key to prevent duplicate job creation on retry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMigrationRequest'
+            examples:
+              oracle_ebs_migration:
+                summary: Oracle EBS to Salesforce — full example
+                value:
+                  name: "Acme Corp - Oracle EBS to Salesforce - Phase 1"
+                  description: "Migrating Customer and Contact data from Oracle EBS R12 to Salesforce Sales Cloud"
+                  tenant_id: ent-acme-corp
+                  source:
+                    system_type: ORACLE_EBS
+                    connection_name: oracle-ebs-prod-r2
+                    entities:
+                      - entity_name: HZ_PARTIES
+                        rule_set_id: oracle-ebs-to-sf-account-v3
+                        filter_expression: "PARTY_TYPE = 'ORGANIZATION' AND STATUS = 'A'"
+                        estimated_records: 1500000
+                      - entity_name: HZ_CONTACTS
+                        rule_set_id: oracle-ebs-to-sf-contact-v2
+                        estimated_records: 2847391
+                  target:
+                    salesforce_connection_name: acme-corp-sf-prod
+                    api_version: "62.0"
+                    bulk_api_concurrency: 10
+                    objects:
+                      - object_name: Account
+                        operation: UPSERT
+                        external_id_field: Legacy_ID__c
+                      - object_name: Contact
+                        operation: UPSERT
+                        external_id_field: Legacy_ID__c
+                  schedule:
+                    start_at: "2025-12-01T22:00:00Z"
+                    maintenance_windows:
+                      - start_utc: "22:00"
+                        end_utc: "06:00"
+                  options:
+                    error_threshold_pct: 2.0
+                    enable_ai_triage: true
+                    notification_emails:
+                      - admin@acme.com
+                      - data-team@acme.com
+                    tags:
+                      project: crm-modernization-q4-2025
+                      change_ticket: CHG-4821
+                      migrated_by: data-team@acme.com
+      responses:
+        '202':
+          description: Migration job created; pre-validation running in background
+          headers:
+            Location:
+              schema:
+                type: string
+              description: URL to retrieve migration status
+              example: /api/v1/migrations/mig-20251201-a3f8b2c1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Migration'
+              example:
+                migration_id: mig-20251201-a3f8b2c1
+                name: "Acme Corp - Oracle EBS to Salesforce - Phase 1"
+                tenant_id: ent-acme-corp
+                status: VALIDATING
+                created_at: "2025-12-01T20:00:00Z"
+                updated_at: "2025-12-01T20:00:01Z"
+                started_at: null
+                estimated_completion: null
+                _links:
+                  self: /api/v1/migrations/mig-20251201-a3f8b2c1
+                  report: /api/v1/migrations/mig-20251201-a3f8b2c1/report
+                  validation: /api/v1/migrations/mig-20251201-a3f8b2c1/validation
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Idempotency key conflict — duplicate request detected within 24h window
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /migrations/{migrationId}:
+    get:
+      tags: [migrations]
+      operationId: getMigration
+      summary: Get migration job status and progress
+      description: |
+        Returns current status, phase-level progress, and record count statistics
+        for a migration job.
+
+        Recommended polling interval during active migration: 30 seconds.
+        When migration reaches COMPLETED or FAILED, no further polling is needed.
+      security:
+        - OAuth2ClientCredentials: [migrations:read]
+        - ApiKeyHeader: []
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+      responses:
+        '200':
+          description: Migration job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Migration'
+              example:
+                migration_id: mig-20251201-a3f8b2c1
+                name: "Acme Corp - Oracle EBS to Salesforce - Phase 1"
+                tenant_id: ent-acme-corp
+                status: RUNNING
+                created_at: "2025-12-01T20:00:00Z"
+                updated_at: "2025-12-01T22:14:37Z"
+                started_at: "2025-12-01T22:00:03Z"
+                completed_at: null
+                estimated_completion: "2025-12-02T14:30:00Z"
+                phases:
+                  - name: EXTRACTION
+                    status: COMPLETED
+                    records_total: 2847391
+                    records_processed: 2847391
+                    records_failed: 0
+                    throughput_per_minute: 0
+                    started_at: "2025-12-01T22:00:05Z"
+                    completed_at: "2025-12-01T23:47:12Z"
+                    estimated_completion: null
+                  - name: TRANSFORMATION
+                    status: RUNNING
+                    records_total: 2847391
+                    records_processed: 2789044
+                    records_failed: 58347
+                    throughput_per_minute: 48750.5
+                    started_at: "2025-12-01T22:00:47Z"
+                    completed_at: null
+                    estimated_completion: "2025-12-01T22:16:00Z"
+                  - name: LOADING
+                    status: RUNNING
+                    records_total: 2789044
+                    records_processed: 2023847
+                    records_failed: 8471
+                    throughput_per_minute: 4212.3
+                    started_at: "2025-12-01T22:01:22Z"
+                    completed_at: null
+                    estimated_completion: "2025-12-02T14:30:00Z"
+                totals:
+                  records_expected: 2847391
+                  records_extracted: 2847391
+                  records_transformed: 2789044
+                  records_loaded: 2023847
+                  records_rejected: 58347
+                  records_in_dlq: 847
+                  success_rate_pct: 97.85
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /migrations/{migrationId}/pause:
+    post:
+      tags: [control]
+      operationId: pauseMigration
+      summary: Pause an active migration job
+      description: |
+        Gracefully pauses a running migration. All Kafka consumer offsets are
+        preserved; the migration can resume from exactly where it stopped with no
+        data loss or re-processing.
+
+        Pausing does NOT affect records already written to Salesforce.
+
+        Set `pause_loading_only: true` during Salesforce maintenance windows to
+        allow extraction and transformation to continue buffering in Kafka while
+        loading is suspended.
+
+        Only migrations in `RUNNING` state can be paused.
+      security:
+        - OAuth2ClientCredentials: [migrations:write]
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+                  description: Reason for pausing — required for audit trail
+                  example: "Pausing for Salesforce maintenance window 02:00-04:00 UTC"
+                pause_loading_only:
+                  type: boolean
+                  default: false
+                  description: |
+                    When true, only the Salesforce loading stage is paused.
+                    Extraction and transformation continue buffering in Kafka.
+                resume_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Optional scheduled auto-resume time
+                  example: "2025-12-02T04:00:00Z"
+            example:
+              reason: "Salesforce scheduled maintenance window 02:00-04:00 UTC Dec 2"
+              pause_loading_only: true
+              resume_at: "2025-12-02T04:00:00Z"
+      responses:
+        '200':
+          description: Migration paused successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Migration'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Migration is not in a pauseable state (must be RUNNING)
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /migrations/{migrationId}/resume:
+    post:
+      tags: [control]
+      operationId: resumeMigration
+      summary: Resume a paused migration job
+      description: |
+        Resumes a migration that is in `PAUSED` state. The migration continues from
+        exactly the Kafka consumer offset where it paused — no records are skipped
+        or re-processed.
+
+        Pre-resumption health checks run automatically before starting pipeline stages:
+        - Source system connectivity
+        - Salesforce API availability and remaining quota
+        - SPIRE SVID validity (auto-renewed if < 30 minutes remaining)
+        - Vault token validity (auto-renewed)
+        - Kafka broker connectivity
+
+        If any health check fails, the resume is rejected with a 409 and a description
+        of the failing check.
+      security:
+        - OAuth2ClientCredentials: [migrations:write]
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operator_id, confirmation]
+              properties:
+                operator_id:
+                  type: string
+                  format: email
+                  description: Identity of the operator resuming the migration
+                  example: data-engineer@acme.com
+                confirmation:
+                  type: string
+                  description: Must be the exact string "RESUME" to prevent accidental execution
+                  enum: [RESUME]
+                issue_resolved_notes:
+                  type: string
+                  maxLength: 1000
+                  description: Notes describing what was resolved before resuming
+                  example: "Salesforce maintenance window completed successfully. API available."
+            example:
+              operator_id: data-engineer@acme.com
+              confirmation: RESUME
+              issue_resolved_notes: "Salesforce maintenance window completed at 03:47 UTC. API responding normally."
+      responses:
+        '200':
+          description: Migration resumed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Migration'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            Migration cannot be resumed. Either:
+            - Not in PAUSED state
+            - Pre-resumption health check failed (check error message for details)
+          $ref: '#/components/responses/Conflict'
+
+  /migrations/{migrationId}/rollback:
+    post:
+      tags: [control]
+      operationId: rollbackMigration
+      summary: Rollback a migration — delete all loaded records from Salesforce
+      description: |
+        Initiates a rollback of the migration, deleting from Salesforce all records
+        that were CREATED during this migration job.
+
+        **Important caveats:**
+        - Records that were UPDATED (not created) cannot be automatically restored
+          unless a pre-migration Salesforce export was captured.
+        - Rollback duration is approximately 2× the loading duration.
+        - Requires dual authorization (`approver_id` must differ from `operator_id`)
+          for Tier 1 and Tier 2 tenants.
+
+        Rollback is available for migrations in: `RUNNING`, `PAUSED`, `COMPLETED`, `FAILED`
+        Rollback is NOT available for: `ROLLED_BACK`, `CANCELLED`, `DRAFT`, `VALIDATING`, `READY`
+
+        The rollback process:
+        1. Immediately stops all loading (if currently running)
+        2. Reads the Kafka `.loaded` topic to enumerate all created record IDs
+        3. Issues Salesforce Bulk API DELETE for all created records in batches
+        4. If a pre-migration backup exists, restores updated record field values
+        5. Returns final rollback completeness statistics
+
+        Track progress via `GET /api/v1/migrations/{migrationId}` — status transitions
+        to `ROLLING_BACK` then `ROLLED_BACK`.
+      security:
+        - OAuth2ClientCredentials: [migrations:write]
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operator_id, confirmation, reason]
+              properties:
+                operator_id:
+                  type: string
+                  format: email
+                  example: data-engineer@acme.com
+                approver_id:
+                  type: string
+                  format: email
+                  description: |
+                    Required for Tier 1 and Tier 2 tenants; must be different from operator_id.
+                    Not required for Tier 3 tenants.
+                  example: engineering-lead@migration-platform.com
+                reason:
+                  type: string
+                  minLength: 20
+                  maxLength: 1000
+                  example: "Client requested rollback after business review identified data quality concerns"
+                confirmation:
+                  type: string
+                  description: Must be the exact string "ROLLBACK" to prevent accidental execution
+                  enum: [ROLLBACK]
+                scope:
+                  type: object
+                  description: Optionally limit rollback to specific Salesforce objects. Default is all objects.
+                  properties:
+                    objects:
+                      type: array
+                      items:
+                        type: string
+                      example: [Account, Contact]
+            example:
+              operator_id: data-engineer@acme.com
+              approver_id: engineering-lead@migration-platform.com
+              reason: "Client VP requested rollback — data quality concerns identified in executive review"
+              confirmation: ROLLBACK
+              scope:
+                objects: [Account, Contact]
+      responses:
+        '202':
+          description: |
+            Rollback initiated successfully. The migration transitions to ROLLING_BACK state.
+            Track progress via GET /api/v1/migrations/{migrationId}.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Migration'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Migration cannot be rolled back in its current state
+          $ref: '#/components/responses/Conflict'
+
+  /migrations/{migrationId}/report:
+    get:
+      tags: [reports]
+      operationId: getMigrationReport
+      summary: Get the migration completion report
+      description: |
+        Returns the migration completion report with record counts, data quality
+        analysis, rejection breakdown by error category, and download links.
+
+        Reports are generated asynchronously after migration completes. If the report
+        is not yet ready, a `202 Accepted` is returned with an `estimated_seconds` field.
+
+        For `format=pdf` or `format=html`, the response is a `302 Redirect` to a
+        pre-signed download URL (valid for 24 hours).
+      security:
+        - OAuth2ClientCredentials: [migrations:read]
+        - ApiKeyHeader: []
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, pdf, html]
+            default: json
+          description: Report format. pdf and html return 302 redirect to download URL.
+      responses:
+        '200':
+          description: Migration report (JSON format)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationReport'
+        '202':
+          description: Report is still being generated; retry after estimated_seconds
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Migration report is being generated"
+                  estimated_seconds:
+                    type: integer
+                    example: 90
+        '302':
+          description: Redirect to pre-signed download URL (pdf/html formats only)
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /migrations/{migrationId}/validation:
+    get:
+      tags: [reports]
+      operationId: getMigrationValidation
+      summary: Get data quality validation gate results
+      description: |
+        Returns results from all data quality validation gates run during and after
+        the migration. For in-progress migrations, returns the most recent results.
+        For completed migrations, returns the final post-load validation results.
+
+        Three validation gates are reported:
+        - `gate1_source_completeness` — Run against raw extracted data
+        - `gate2_target_validity` — Run against transformed data before loading
+        - `gate3_post_load_sample` — Run against 1% random sample of loaded Salesforce records
+      security:
+        - OAuth2ClientCredentials: [migrations:read]
+        - ApiKeyHeader: []
+      parameters:
+        - $ref: '#/components/parameters/MigrationIdParam'
+        - name: gate
+          in: query
+          schema:
+            type: string
+            enum: [gate1_source_completeness, gate2_target_validity, gate3_post_load_sample, all]
+            default: all
+          description: Filter results to a specific validation gate
+      responses:
+        '200':
+          description: Validation gate results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+              example:
+                validation_id: "val-20251201-xyz789abc"
+                migration_id: "mig-20251201-a3f8b2c1"
+                validated_at: "2025-12-02T14:30:45Z"
+                overall_status: PASSED_WITH_WARNINGS
+                gates:
+                  - gate_id: gate1_source_completeness
+                    name: Source Completeness
+                    status: PASSED
+                    checks:
+                      - check_id: record_count_within_tolerance
+                        description: "Record count within 1% of pre-migration estimate"
+                        status: PASSED
+                        actual_value: "2847391"
+                        expected_value: "~2850000"
+                        severity: INFO
+                      - check_id: referential_integrity
+                        description: "Orphan record rate below threshold"
+                        status: PASSED
+                        actual_value: "0.03%"
+                        expected_value: "<1%"
+                        severity: INFO
+                  - gate_id: gate2_target_validity
+                    name: Target Validity
+                    status: PASSED_WITH_WARNINGS
+                    checks:
+                      - check_id: required_fields_populated
+                        description: "Required Salesforce fields are populated after transformation"
+                        status: PASSED
+                        actual_value: "99.99%"
+                        expected_value: ">99%"
+                        severity: INFO
+                      - check_id: phone_format_validity
+                        description: "Phone numbers conform to E.164 format"
+                        status: WARNING
+                        actual_value: "71.2%"
+                        expected_value: ">85%"
+                        severity: WARNING
+                  - gate_id: gate3_post_load_sample
+                    name: Post-Load Sample Verification
+                    status: PASSED
+                    checks:
+                      - check_id: sample_field_match
+                        description: "Sampled Salesforce records match expected transformed values"
+                        status: PASSED
+                        actual_value: "1000/1000 records matched"
+                        expected_value: "100% match"
+                        severity: INFO
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Platform liveness check
+      description: |
+        Returns overall platform health and component-level status.
+        Does not require authentication. Suitable for external monitoring and load balancer checks.
+
+        Returns `200 OK` when healthy or degraded (platform is serving requests, possibly with
+        reduced capability). Returns `503 Service Unavailable` when critical components are down.
+      security: []
+      responses:
+        '200':
+          description: Platform is healthy or degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: healthy
+                timestamp: "2025-12-01T22:00:00Z"
+                version: "1.4.0"
+                commit_sha: a3f8b2c
+                components:
+                  kafka:
+                    status: healthy
+                    latency_ms: 3
+                  vault:
+                    status: healthy
+                    latency_ms: 12
+                  schema_registry:
+                    status: healthy
+                    latency_ms: 8
+                  spire:
+                    status: healthy
+                    latency_ms: 2
+                  postgresql:
+                    status: healthy
+                    latency_ms: 5
+        '503':
+          description: Platform unhealthy — one or more critical components unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+              example:
+                status: unhealthy
+                timestamp: "2025-12-01T22:00:00Z"
+                version: "1.4.0"
+                commit_sha: a3f8b2c
+                components:
+                  kafka:
+                    status: unhealthy
+                    latency_ms: null
+                    message: "Connection refused to kafka.platform-kafka.svc.cluster.local:9092"
+                  vault:
+                    status: healthy
+                    latency_ms: 14
+                  schema_registry:
+                    status: unhealthy
+                    latency_ms: null
+                    message: "Dependent on Kafka — unavailable"
+
+  /health/ready:
+    get:
+      tags: [health]
+      operationId: getReadiness
+      summary: Kubernetes readiness probe
+      description: |
+        Returns `200 OK` if the platform is fully ready to accept API traffic.
+        Returns `503 Service Unavailable` if not ready (e.g., database migrations running,
+        Vault sealed, initialization in progress).
+
+        Configure the Kubernetes readiness probe to use this endpoint:
+        ```yaml
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 3
+        ```
+      security: []
+      responses:
+        '200':
+          description: Platform is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready]
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+        '503':
+          description: Platform is not ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready, reason]
+                properties:
+                  ready:
+                    type: boolean
+                    example: false
+                  reason:
+                    type: string
+                    example: "Database schema migration running; estimated completion in 45 seconds"
+
+  /metrics:
+    get:
+      tags: [metrics]
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      description: |
+        Returns platform and migration metrics in Prometheus text exposition format (0.0.4).
+        Configure Prometheus to scrape this endpoint at 15-second intervals.
+
+        **Key metrics exported:**
+
+        | Metric | Type | Description |
+        |--------|------|-------------|
+        | `migration_records_extracted_total` | Counter | Records extracted from source |
+        | `migration_records_transformed_total` | Counter | Records transformed (with status label) |
+        | `migration_records_loaded_total` | Counter | Records loaded to Salesforce |
+        | `migration_records_failed_total` | Counter | Failed records (with stage and error_code labels) |
+        | `migration_dlq_depth` | Gauge | Current DLQ record count |
+        | `migration_throughput_records_per_second` | Gauge | Current pipeline throughput per stage |
+        | `kafka_consumer_lag_records` | Gauge | Consumer group lag per topic/partition |
+        | `salesforce_api_daily_limit_remaining` | Gauge | Remaining Salesforce API calls today |
+        | `vault_token_ttl_seconds` | Gauge | Time until Vault token expiry per service |
+        | `spire_svid_ttl_seconds` | Gauge | Time until SPIFFE SVID expiry per workload |
+        | `migration_job_duration_seconds` | Gauge | Duration of in-progress migration jobs |
+
+        All metrics include `tenant_id` and `job_id` labels for multi-tenant filtering.
+      security:
+        - OAuth2ClientCredentials: [metrics:read]
+        - ApiKeyHeader: []
+      responses:
+        '200':
+          description: Prometheus text format metrics
+          content:
+            text/plain; version=0.0.4:
+              schema:
+                type: string
+              example: |
+                # HELP migration_records_extracted_total Total records extracted from source system
+                # TYPE migration_records_extracted_total counter
+                migration_records_extracted_total{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",source_system="ORACLE_EBS"} 2847391
+                # HELP migration_records_loaded_total Total records successfully loaded to Salesforce
+                # TYPE migration_records_loaded_total counter
+                migration_records_loaded_total{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",salesforce_object="Account"} 892341
+                migration_records_loaded_total{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",salesforce_object="Contact"} 1131506
+                # HELP migration_records_failed_total Total records that failed processing
+                # TYPE migration_records_failed_total counter
+                migration_records_failed_total{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",stage="LOADING",error_code="SF_DUPLICATE_VALUE"} 892
+                migration_records_failed_total{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",stage="TRANSFORMATION",error_code="REQUIRED_FIELD_NULL"} 41203
+                # HELP migration_dlq_depth Current number of records awaiting DLQ remediation
+                # TYPE migration_dlq_depth gauge
+                migration_dlq_depth{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1"} 847
+                # HELP migration_throughput_records_per_second Current migration throughput
+                # TYPE migration_throughput_records_per_second gauge
+                migration_throughput_records_per_second{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",stage="LOADING"} 70.2
+                # HELP kafka_consumer_lag_records Kafka consumer group lag in records
+                # TYPE kafka_consumer_lag_records gauge
+                kafka_consumer_lag_records{tenant_id="ent-acme-corp",job_id="mig-20251201-a3f8b2c1",consumer_group="migration-loader",topic="prod.ent-acme-corp.migration.mig-20251201-a3f8b2c1.validated"} 12847
+                # HELP salesforce_api_daily_limit_remaining Remaining Salesforce API calls for the current 24h window
+                # TYPE salesforce_api_daily_limit_remaining gauge
+                salesforce_api_daily_limit_remaining{tenant_id="ent-acme-corp"} 35847
+                # HELP vault_token_ttl_seconds Time remaining on Vault token before expiry
+                # TYPE vault_token_ttl_seconds gauge
+                vault_token_ttl_seconds{service="loading-service",tenant_id="ent-acme-corp"} 2847
+                # HELP spire_svid_ttl_seconds Time remaining on SPIFFE SVID before rotation
+                # TYPE spire_svid_ttl_seconds gauge
+                spire_svid_ttl_seconds{namespace="tenant-ent-acme-corp-app",service_account="loading-service"} 2134
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'

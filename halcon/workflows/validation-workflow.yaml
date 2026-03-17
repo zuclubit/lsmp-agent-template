@@ -1,0 +1,331 @@
+# Validation Workflow Definition
+# Version: 2.0.0
+# Workflow: validation_run
+#
+# Three validation gates (matches API spec):
+#   gate1_source_completeness — validates source data quality
+#   gate2_target_validity     — validates target org readiness
+#   gate3_post_load_sample    — validates migrated data in target
+#
+# This workflow runs standalone (no data movement) and as sub-phases
+# of migration_run. Results are consumed by migration_run phase gates.
+
+workflow:
+  name: validation_run
+  version: "2.0.0"
+  description: "Three-gate validation workflow for migration data quality"
+  timeout_minutes: 120
+  audit_logging: required
+  standalone_executable: true
+  reusable_as_subworkflow: true
+
+# ---------------------------------------------------------------------------
+# Gate 1: Source Completeness
+# ---------------------------------------------------------------------------
+gates:
+
+  - gate: gate1_source_completeness
+    order: 1
+    agent: validation-agent
+    description: >
+      Validate that the source system contains all expected entities, that
+      record counts meet minimum thresholds, that required fields have
+      acceptable null rates, and that schema matches the declared manifest.
+
+    inputs:
+      required:
+        - name: migration_id
+          type: string
+        - name: source_connection_string
+          type: secret_ref
+          vault_path: "secret/migration/{tenant_id}/source_db"
+        - name: source_schema_manifest
+          type: object
+          description: "Expected entities, fields, and cardinality"
+        - name: tenant_id
+          type: string
+        - name: min_record_count
+          type: integer
+          default: 1
+      optional:
+        - name: null_rate_threshold
+          type: float
+          default: 0.05
+          description: "Max acceptable null rate per required field"
+        - name: schema_drift_tolerance
+          type: string
+          enum: [STRICT, LENIENT]
+          default: STRICT
+
+    validations:
+      entity_presence:
+        description: "All entities in manifest must exist in source"
+        query_type: metadata
+        fail_on: missing_entities
+
+      record_count_check:
+        description: "Total record count must meet minimum threshold"
+        query_type: count
+        fail_on: "source_record_count < min_record_count"
+
+      required_field_null_rate:
+        description: "Required fields must not exceed null_rate_threshold"
+        query_type: aggregate
+        fail_on: "any(field.null_rate > null_rate_threshold for field in required_fields)"
+
+      schema_conformance:
+        description: "Source schema must match manifest (field names, types)"
+        query_type: metadata
+        fail_on: "schema_diff.breaking_changes > 0"
+
+      referential_integrity_spot_check:
+        description: "Sample FK references must resolve"
+        query_type: join_check
+        sample_size: 1000
+        fail_on: "broken_fk_rate > 0.01"
+
+    outputs:
+      - name: gate1_result
+        type: object
+        schema:
+          passed: boolean
+          source_record_count: integer
+          entity_coverage: float
+          schema_diff: object
+          null_rates_by_field: object
+          referential_integrity_rate: float
+          failure_reasons: array
+
+      - name: source_record_count
+        type: integer
+
+      - name: schema_diff_report
+        type: object
+
+    routing:
+      on_pass:
+        action: advance_to_gate2_target_validity
+        emit_event: GATE1_PASSED
+      on_fail:
+        action: REPORT_AND_STOP
+        emit_event: GATE1_FAILED
+        alert: slack_migration_channel
+        write_report: true
+        report_path: ".halcon/gate-reports/gate1_{migration_id}_{timestamp}.json"
+
+# ---------------------------------------------------------------------------
+# Gate 2: Target Validity
+# ---------------------------------------------------------------------------
+  - gate: gate2_target_validity
+    order: 2
+    agent: validation-agent
+    description: >
+      Validate that the target Salesforce org is ready to receive migrated data:
+      sufficient API call budget, correct object and field permissions, no
+      duplicate prevention rules that would block bulk inserts, and no
+      conflicting records from prior partial migrations.
+
+    depends_on: gate1_source_completeness
+    requires_gate_pass: gate1_source_completeness
+
+    inputs:
+      required:
+        - name: migration_config
+          type: object
+        - name: salesforce_credentials
+          type: secret_ref
+          vault_path: "secret/migration/{tenant_id}/salesforce"
+        - name: tenant_id
+          type: string
+        - name: source_record_count
+          source: gate1_source_completeness.source_record_count
+        - name: execution_plan
+          type: object
+          optional: true
+      optional:
+        - name: estimated_api_calls
+          type: integer
+
+    validations:
+      api_budget_check:
+        description: "Remaining Salesforce API calls must cover migration estimate"
+        api_endpoint: "GET /services/data/v59.0/limits"
+        field: "DailyApiRequests.Remaining"
+        fail_on: "api_calls_remaining < estimated_api_calls * 1.2"
+
+      object_permissions_check:
+        description: "Integration user must have Create and Edit on all target objects"
+        permission_required: [Create, Edit, Read]
+        fail_on: "any missing permission"
+
+      field_permissions_check:
+        description: "All mapped target fields must be writable"
+        fail_on: "any mapped field not writable"
+
+      duplicate_rule_check:
+        description: "Active duplicate rules must not block bulk inserts"
+        fail_on: "blocking_duplicate_rules > 0 AND bypass_duplicate_rules == false"
+
+      prior_migration_conflict:
+        description: "No partial data from prior failed migration in target"
+        query: "SELECT COUNT() FROM {object} WHERE Migration_ID__c = '{migration_id}'"
+        fail_on: "partial_migration_count > 0 AND rollback_confirmed == false"
+
+      storage_capacity_check:
+        description: "Target org must have sufficient file storage"
+        api_endpoint: "GET /services/data/v59.0/limits"
+        field: "DataStorageMB.Remaining"
+        fail_on: "storage_remaining_mb < estimated_storage_mb * 1.1"
+
+    outputs:
+      - name: gate2_result
+        type: object
+        schema:
+          passed: boolean
+          api_calls_available: integer
+          estimated_api_calls: integer
+          duplicate_risk_score: float
+          storage_available_mb: integer
+          permission_check_results: object
+          failure_reasons: array
+
+      - name: target_capacity_report
+        type: object
+
+      - name: api_calls_available
+        type: integer
+
+    routing:
+      on_pass:
+        action: advance_to_gate3_post_load_sample
+        emit_event: GATE2_PASSED
+      on_fail:
+        action: REPORT_AND_STOP
+        emit_event: GATE2_FAILED
+        alert: slack_migration_channel
+        write_report: true
+        report_path: ".halcon/gate-reports/gate2_{migration_id}_{timestamp}.json"
+
+# ---------------------------------------------------------------------------
+# Gate 3: Post-Load Sample Validation
+# ---------------------------------------------------------------------------
+  - gate: gate3_post_load_sample
+    order: 3
+    agent: validation-agent
+    description: >
+      After migration execution, validate a stratified random sample of
+      migrated records against their source originals. Checks field-level
+      accuracy, referential integrity in target, and overall reconciliation.
+      This gate runs after EXECUTION phase in migration_run.
+
+    depends_on: [gate1_source_completeness, gate2_target_validity]
+    requires_gate_pass: [gate1_source_completeness, gate2_target_validity]
+
+    inputs:
+      required:
+        - name: migration_result
+          type: object
+          description: "Output from EXECUTION phase"
+        - name: source_connection_string
+          type: secret_ref
+        - name: salesforce_credentials
+          type: secret_ref
+        - name: tenant_id
+          type: string
+        - name: source_record_count
+          source: gate1_source_completeness.source_record_count
+        - name: migration_id
+          type: string
+      optional:
+        - name: sample_size
+          type: integer
+          default: 500
+          description: "Records to sample per entity for field comparison"
+        - name: max_discrepancy_rate
+          type: float
+          default: 0.001
+
+    validations:
+      record_count_reconciliation:
+        description: "Target record count must match source count within tolerance"
+        fail_on: "abs(target_count - source_count) / source_count > max_discrepancy_rate"
+
+      field_accuracy_sample:
+        description: "Sampled field values must match source originals"
+        sample_strategy: stratified_random
+        sample_size: "{sample_size}"
+        comparison: field_by_field
+        fail_on: "field_mismatch_rate > 0.001"
+
+      referential_integrity_target:
+        description: "FK relationships must be intact in target"
+        fail_on: "broken_fk_rate > 0.001"
+
+      transformation_correctness:
+        description: "Transformed fields must match expected output per ruleset"
+        sample_size: 200
+        fail_on: "transformation_error_rate > 0.001"
+
+      dlq_residual_check:
+        description: "DLQ depth should be zero or within acceptable threshold"
+        fail_on: "dlq_depth > dlq_threshold"
+
+    outputs:
+      - name: gate3_result
+        type: object
+        schema:
+          passed: boolean
+          sample_size: integer
+          discrepancy_count: integer
+          field_mismatch_rate: float
+          referential_integrity_rate: float
+          dlq_residual: integer
+          failure_reasons: array
+
+      - name: post_migration_report
+        type: object
+
+      - name: reconciliation_report
+        type: object
+        schema:
+          source_count: integer
+          target_count: integer
+          discrepancy_rate: float
+          discrepant_record_ids: array
+
+    routing:
+      on_pass:
+        action: COMPLETE_VALIDATION_WORKFLOW
+        emit_event: GATE3_PASSED
+        downstream: [advance_to_COMPLETE_WORKFLOW in migration_run]
+      on_fail:
+        action: ESCALATE_TO_HUMAN
+        emit_event: GATE3_FAILED
+        alert: [pagerduty, slack_oncall]
+        write_report: true
+        report_path: ".halcon/gate-reports/gate3_{migration_id}_{timestamp}.json"
+        preserve_artifacts: true
+
+# ---------------------------------------------------------------------------
+# Workflow Summary Output
+# ---------------------------------------------------------------------------
+workflow_summary_output:
+  name: validation_summary
+  type: object
+  schema:
+    workflow_id: string
+    migration_id: string
+    all_gates_passed: boolean
+    gates:
+      gate1_source_completeness:
+        passed: boolean
+        source_record_count: integer
+      gate2_target_validity:
+        passed: boolean
+        api_calls_available: integer
+      gate3_post_load_sample:
+        passed: boolean
+        discrepancy_rate: float
+    executed_at: datetime
+    duration_seconds: integer
+    recommendations: array

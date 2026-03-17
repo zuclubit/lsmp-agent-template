@@ -1,0 +1,370 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/schemas/execution-agent/v2.0.0",
+  "title": "ExecutionAgent",
+  "description": "Input and output schemas for the Single-Step Execution Agent (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "StepStatus": {
+      "type": "string",
+      "enum": ["COMPLETED", "FAILED", "SKIPPED", "BLOCKED", "ALREADY_COMPLETED"],
+      "description": "Result status of a single step execution"
+    },
+    "StepType": {
+      "type": "string",
+      "enum": [
+        "extract",
+        "transform",
+        "load",
+        "validate",
+        "notify",
+        "checkpoint",
+        "bulk_delete",
+        "truncate_staging",
+        "rollback",
+        "archive",
+        "deactivate_records"
+      ],
+      "description": "Type of migration step. bulk_delete/truncate_staging/rollback/archive/deactivate_records are destructive and require operator_id."
+    },
+    "PlanStep": {
+      "type": "object",
+      "required": ["step_id", "step_type", "entity_name", "phase", "sequence_number"],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique step identifier"
+        },
+        "step_type": {
+          "$ref": "#/$defs/StepType"
+        },
+        "entity_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Salesforce or source entity name (e.g. Account, Contact)"
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["extraction", "transformation", "loading", "validation", "reconciliation"],
+          "description": "Migration phase this step belongs to"
+        },
+        "sequence_number": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Ordinal position within the migration plan"
+        },
+        "config": {
+          "type": "object",
+          "description": "Step-specific configuration (batch_size, filters, source_table, etc.)"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "step_ids this step depends on — must be completed before this step runs"
+        },
+        "is_destructive": {
+          "type": "boolean",
+          "default": false,
+          "description": "True when this step modifies or deletes data irreversibly"
+        }
+      }
+    },
+    "ExecutionContext": {
+      "type": "object",
+      "required": ["plan_step", "migration_id", "tenant_id"],
+      "additionalProperties": false,
+      "properties": {
+        "plan_step": {
+          "$ref": "#/$defs/PlanStep",
+          "description": "The single step to execute"
+        },
+        "migration_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration run identifier"
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Multi-tenant identifier — enforces data isolation"
+        },
+        "operator_id": {
+          "type": ["string", "null"],
+          "description": "Required when step_type is destructive (bulk_delete, truncate_staging, rollback, archive, deactivate_records)"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, simulate execution without making any state changes"
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Auto-generated request correlation ID for distributed tracing"
+        }
+      }
+    },
+    "StepResult": {
+      "type": "object",
+      "required": ["step_id", "status", "records_processed", "dry_run"],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "description": "Echoed from PlanStep.step_id"
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus"
+        },
+        "records_processed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of records processed. 0 on failure or dry run."
+        },
+        "duration_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Wall-clock execution time in milliseconds"
+        },
+        "checkpoint_id": {
+          "type": ["string", "null"],
+          "description": "Checkpoint created after successful execution. null on failure."
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message when status is FAILED or BLOCKED"
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "Whether this invocation was a dry run"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when step completed. null on failure."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional context: idempotency_status, checkpoint_status, execution_errors",
+          "properties": {
+            "idempotency_status": { "type": ["string", "null"] },
+            "checkpoint_status": { "type": ["string", "null"] },
+            "execution_errors": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "First 10 errors from the execution API response"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "ExecutionAgent Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "$ref": "#/$defs/ExecutionContext",
+      "title": "ExecutionAgentInput",
+      "description": "Request payload — one ExecutionContext per invocation"
+    },
+    "output": {
+      "$ref": "#/$defs/StepResult",
+      "title": "ExecutionAgentOutput",
+      "description": "Single step result returned by the agent"
+    }
+  },
+
+  "tool_schemas": [
+    {
+      "name": "check_step_idempotency",
+      "description": "Check if a migration step has already been completed. MUST be called FIRST before execute_migration_step. Returns already_completed, checkpoint_id, completed_at, records_processed.",
+      "input_schema": {
+        "type": "object",
+        "required": ["step_id", "migration_id"],
+        "properties": {
+          "step_id": { "type": "string" },
+          "migration_id": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "execute_migration_step",
+      "description": "Execute a single migration step. MUST only be called after check_step_idempotency returns already_completed=False.",
+      "input_schema": {
+        "type": "object",
+        "required": ["step_id", "migration_id", "tenant_id"],
+        "properties": {
+          "step_id": { "type": "string" },
+          "migration_id": { "type": "string" },
+          "tenant_id": { "type": "string" },
+          "dry_run": { "type": "boolean", "default": false }
+        }
+      }
+    },
+    {
+      "name": "create_checkpoint",
+      "description": "Persist a checkpoint after successful execution. MUST be called after every successful execute_migration_step.",
+      "input_schema": {
+        "type": "object",
+        "required": ["step_id", "migration_id", "state"],
+        "properties": {
+          "step_id": { "type": "string" },
+          "migration_id": { "type": "string" },
+          "state": {
+            "type": "object",
+            "description": "Serializable state snapshot",
+            "required": ["records_processed"],
+            "properties": {
+              "records_processed": { "type": "integer" },
+              "step_type": { "type": "string" },
+              "phase": { "type": "string" },
+              "completed_at": { "type": "string", "format": "date-time" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "pause_migration",
+      "description": "Pause the migration. Requires operator_id. Use when a step fails critically.",
+      "input_schema": {
+        "type": "object",
+        "required": ["migration_id", "reason"],
+        "properties": {
+          "migration_id": { "type": "string" },
+          "reason": { "type": "string" },
+          "operator_id": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "get_migration_phase_status",
+      "description": "Get the current status of a migration phase. Use to verify prerequisites.",
+      "input_schema": {
+        "type": "object",
+        "required": ["migration_id", "phase"],
+        "properties": {
+          "migration_id": { "type": "string" },
+          "phase": {
+            "type": "string",
+            "enum": ["extraction", "transformation", "loading", "validation", "reconciliation"]
+          }
+        }
+      }
+    }
+  ],
+
+  "blocking_rules": {
+    "description": "Execution is BLOCKED when any of these conditions are true",
+    "conditions": [
+      "step_type is destructive AND operator_id is absent",
+      "check_step_idempotency returns already_completed=True (ALREADY_COMPLETED, not FAILED)"
+    ]
+  },
+
+  "examples": [
+    {
+      "input": {
+        "plan_step": {
+          "step_id": "mig-001-extract-account-001",
+          "step_type": "extract",
+          "entity_name": "Account",
+          "phase": "extraction",
+          "sequence_number": 1,
+          "config": { "batch_size": 2000, "source_table": "dbo.Accounts" },
+          "depends_on": [],
+          "is_destructive": false
+        },
+        "migration_id": "mig-001",
+        "tenant_id": "tenant-acme",
+        "operator_id": null,
+        "dry_run": false,
+        "correlation_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab"
+      },
+      "output": {
+        "step_id": "mig-001-extract-account-001",
+        "status": "COMPLETED",
+        "records_processed": 94000,
+        "duration_ms": 11582,
+        "checkpoint_id": "c1d2e3f4-0000-0000-0000-000000000001",
+        "error": null,
+        "dry_run": false,
+        "completed_at": "2026-03-16T12:00:00Z",
+        "metadata": {
+          "idempotency_status": "PROCEED",
+          "checkpoint_status": "CHECKPOINT_CREATED",
+          "execution_errors": []
+        }
+      }
+    },
+    {
+      "input": {
+        "plan_step": {
+          "step_id": "mig-001-truncate-staging-001",
+          "step_type": "truncate_staging",
+          "entity_name": "staging_accounts",
+          "phase": "loading",
+          "sequence_number": 5,
+          "config": {},
+          "depends_on": ["mig-001-load-account-001"],
+          "is_destructive": true
+        },
+        "migration_id": "mig-001",
+        "tenant_id": "tenant-acme",
+        "operator_id": null,
+        "dry_run": false,
+        "correlation_id": "a1b2c3d4-0000-0000-0000-000000000001"
+      },
+      "output": {
+        "step_id": "mig-001-truncate-staging-001",
+        "status": "BLOCKED",
+        "records_processed": 0,
+        "duration_ms": 2,
+        "checkpoint_id": null,
+        "error": "Step type 'truncate_staging' is destructive and requires operator_id in ExecutionContext. Refusing to execute.",
+        "dry_run": false,
+        "completed_at": null,
+        "metadata": {}
+      }
+    },
+    {
+      "input": {
+        "plan_step": {
+          "step_id": "mig-001-extract-contact-001",
+          "step_type": "extract",
+          "entity_name": "Contact",
+          "phase": "extraction",
+          "sequence_number": 2,
+          "config": { "batch_size": 1000 },
+          "depends_on": [],
+          "is_destructive": false
+        },
+        "migration_id": "mig-001",
+        "tenant_id": "tenant-acme",
+        "operator_id": null,
+        "dry_run": false,
+        "correlation_id": "d4e5f6a7-0000-0000-0000-000000000001"
+      },
+      "output": {
+        "step_id": "mig-001-extract-contact-001",
+        "status": "ALREADY_COMPLETED",
+        "records_processed": 45000,
+        "duration_ms": 8,
+        "checkpoint_id": "prev-checkpoint-uuid-here",
+        "error": null,
+        "dry_run": false,
+        "completed_at": "2026-03-16T10:00:00Z",
+        "metadata": {
+          "idempotency": "skipped — already completed"
+        }
+      }
+    }
+  ]
+}

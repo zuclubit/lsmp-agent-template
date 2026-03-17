@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/skills/code-generation/v2.0.0",
+  "title": "CodeGenerationSkill",
+  "description": "Generates production-ready Python, Apex, transformation rules, and migration scripts (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "OutputType": {
+      "type": "string",
+      "enum": ["python", "apex", "transformation_rules", "migration_script"],
+      "description": "Type of code to generate"
+    },
+    "CodeGenerationInput": {
+      "type": "object",
+      "required": ["task_description", "output_type"],
+      "additionalProperties": false,
+      "properties": {
+        "task_description": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 4096,
+          "description": "Plain-language description of the code to generate. Include expected behaviour, error handling requirements, and edge cases."
+        },
+        "output_type": {
+          "$ref": "#/$defs/OutputType"
+        },
+        "target_module": {
+          "type": ["string", "null"],
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*(\\.[a-zA-Z_][a-zA-Z0-9_]*)*$",
+          "default": null,
+          "description": "Dotted Python module path (required when output_type=python). E.g. migration.adapters.salesforce.bulk_poller"
+        },
+        "apex_class_name": {
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][a-zA-Z0-9_]*$",
+          "default": null,
+          "description": "Apex class name (required when output_type=apex). Must be PascalCase."
+        },
+        "context_files": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "maxItems": 20,
+          "default": [],
+          "description": "Paths to existing source files the generator should use as context (interfaces, models, error classes, etc.)"
+        },
+        "entity_names": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "default": [],
+          "description": "Entity or object names relevant to the generated code (e.g. Account, Contact)"
+        }
+      }
+    },
+    "CodeGenerationOutput": {
+      "type": "object",
+      "required": ["generated_code", "file_path", "language", "imports", "test_suggestions", "guardrail_violations"],
+      "additionalProperties": false,
+      "properties": {
+        "generated_code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Complete, syntactically valid source code ready to be persisted"
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Recommended file path relative to the repository root"
+        },
+        "language": {
+          "type": "string",
+          "enum": ["python", "apex", "yaml", "sql"],
+          "description": "Language of the generated code"
+        },
+        "imports": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(import |from )"
+          },
+          "description": "Ordered list of import statements required by generated Python code. Empty for other languages."
+        },
+        "test_suggestions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          },
+          "description": "Human-readable test case suggestions to achieve adequate coverage"
+        },
+        "guardrail_violations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of guardrail violations found. Non-empty means generation FAILED and generated_code must not be used."
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "CodeGenerationSkill Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "$ref": "#/$defs/CodeGenerationInput",
+      "title": "CodeGenerationInput"
+    },
+    "output": {
+      "$ref": "#/$defs/CodeGenerationOutput",
+      "title": "CodeGenerationOutput"
+    }
+  },
+
+  "guardrails": [
+    {
+      "name": "no_exec_eval",
+      "description": "Generated code must not use exec(), eval(), compile(), or equivalent dynamic execution",
+      "applies_to": ["python"]
+    },
+    {
+      "name": "no_shell_injection",
+      "description": "Generated code must not call subprocess with shell=True or construct shell commands from untrusted input",
+      "applies_to": ["python"]
+    },
+    {
+      "name": "no_hardcoded_secrets",
+      "description": "Generated code must not contain API keys, passwords, tokens, or credential literals",
+      "applies_to": ["python", "apex", "yaml", "sql"]
+    },
+    {
+      "name": "type_hints_required",
+      "description": "All public Python functions must have PEP 484 type annotations",
+      "applies_to": ["python"]
+    },
+    {
+      "name": "authorised_paths_only",
+      "description": "File writes must be scoped to /var/data/migration/ or /tmp/migration-work/",
+      "applies_to": ["python"]
+    },
+    {
+      "name": "apex_bulkification",
+      "description": "Apex code must operate on collections (List, Set, Map), not individual records in loops",
+      "applies_to": ["apex"]
+    },
+    {
+      "name": "soql_injection_safe",
+      "description": "Apex SOQL must use bind variables, not string concatenation",
+      "applies_to": ["apex"]
+    }
+  ],
+
+  "examples": [
+    {
+      "input": {
+        "task_description": "Implement a retry-aware Salesforce Bulk API v2 job poller that polls every 30 seconds, raises SalesforceJobFailedError on terminal failure, and returns a BulkJobResult dataclass on success.",
+        "output_type": "python",
+        "target_module": "migration.adapters.salesforce.bulk_poller",
+        "context_files": [
+          "migration/adapters/salesforce/models.py",
+          "migration/adapters/salesforce/errors.py"
+        ],
+        "entity_names": []
+      },
+      "output": {
+        "generated_code": "\"\"\"Salesforce Bulk API v2 job poller.\"\"\"\n\nimport asyncio\nfrom dataclasses import dataclass\n\nfrom migration.adapters.salesforce.errors import SalesforceJobFailedError\nfrom migration.adapters.salesforce.models import BulkJobResult\n\n\nasync def poll_bulk_job(\n    job_id: str,\n    client: object,\n    poll_interval_seconds: int = 30,\n    max_wait_seconds: int = 3600,\n) -> BulkJobResult:\n    \"\"\"Poll a Salesforce Bulk API v2 job until terminal state.\"\"\"\n    elapsed = 0\n    while elapsed < max_wait_seconds:\n        status = await client.get_job_status(job_id)\n        state = status.get(\"state\")\n        if state == \"JobComplete\":\n            return BulkJobResult(\n                job_id=job_id,\n                records_processed=status.get(\"numberRecordsProcessed\", 0),\n            )\n        if state in (\"Failed\", \"Aborted\"):\n            raise SalesforceJobFailedError(f\"Bulk job {job_id} entered state {state!r}\")\n        await asyncio.sleep(poll_interval_seconds)\n        elapsed += poll_interval_seconds\n    raise TimeoutError(f\"Bulk job {job_id} did not complete within {max_wait_seconds}s\")\n",
+        "file_path": "migration/adapters/salesforce/bulk_poller.py",
+        "language": "python",
+        "imports": [
+          "import asyncio",
+          "from dataclasses import dataclass",
+          "from migration.adapters.salesforce.errors import SalesforceJobFailedError",
+          "from migration.adapters.salesforce.models import BulkJobResult"
+        ],
+        "test_suggestions": [
+          "Test that poll_bulk_job returns BulkJobResult when SF API reports JobComplete.",
+          "Test that SalesforceJobFailedError is raised when SF API reports Failed or Aborted.",
+          "Test that poll_bulk_job retries until max_wait_seconds before raising TimeoutError.",
+          "Test behaviour when SF API returns HTTP 429 (rate-limited) mid-poll."
+        ],
+        "guardrail_violations": []
+      }
+    }
+  ]
+}

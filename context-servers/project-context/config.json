@@ -1,0 +1,74 @@
+{
+  "server_id": "project-context",
+  "version": "2.0.0",
+  "description": "Project knowledge context server for migration platform agents",
+
+  "transport": {
+    "type": "stdio",
+    "encoding": "utf-8"
+  },
+
+  "retrieval_strategy": {
+    "mode": "api_backed",
+    "api_base": "${MIGRATION_API_BASE}",
+    "auth": {
+      "type": "bearer_vault",
+      "vault_path": "secret/services/project-context/api-token"
+    },
+    "request_timeout_seconds": 10,
+    "max_retries": 3,
+    "retry_backoff_factor": 2.0
+  },
+
+  "caching": {
+    "enabled": true,
+    "backend": "in_process_ttl",
+    "default_ttl_seconds": 300,
+    "max_entries": 1000,
+    "per_resource_ttl": {
+      "migration": 120,
+      "tenant": 600,
+      "schema": 1800,
+      "ruleset": 3600,
+      "history": 300
+    },
+    "tenant_isolated": true,
+    "cache_key_algorithm": "sha256"
+  },
+
+  "access_control": {
+    "enabled": true,
+    "tenant_isolation": "strict",
+    "cross_tenant_requires_role": "migration_admin",
+    "roles": {
+      "migration_operator": ["read:migration", "read:tenant", "read:schema", "read:ruleset", "read:history"],
+      "migration_admin": ["*"],
+      "security_auditor": ["read:migration", "read:schema", "read:ruleset"],
+      "readonly": ["read:migration", "read:history"],
+      "agent_service": ["read:migration", "read:tenant", "read:schema", "read:ruleset", "read:history"]
+    },
+    "default_role": "agent_service",
+    "audit_access_denials": true
+  },
+
+  "indexing": {
+    "enabled": true,
+    "index_fields": ["source_system", "target_objects", "tenant_id", "status"],
+    "rebuild_interval_seconds": 900,
+    "max_indexed_migrations": 500,
+    "index_only_completed": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_trace_id": true,
+    "redact_fields": ["source_connection_string", "salesforce_credentials", "vault_token"]
+  },
+
+  "health": {
+    "enabled": true,
+    "check_interval_seconds": 30,
+    "upstream_dependencies": ["migration_api"]
+  }
+}

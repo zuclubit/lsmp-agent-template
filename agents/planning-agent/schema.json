@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/schemas/planning-agent/v1.4.0",
+  "title": "PlanningAgent",
+  "description": "Input and output schemas for the Migration Planning Agent (API v1.4.0, redesigned 2026)",
+  "version": "1.4.0",
+
+  "$defs": {
+    "SourceType": {
+      "type": "string",
+      "enum": ["LEGACY_CRM", "ORACLE_EBS"],
+      "description": "Supported legacy source system types"
+    },
+    "RiskLevel": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+      "description": "Qualitative risk classification for the migration"
+    },
+    "StepType": {
+      "type": "string",
+      "enum": [
+        "PRE_MIGRATION_COMPLIANCE_CHECK",
+        "EXTRACT",
+        "VALIDATE_SOURCE",
+        "TRANSFORM",
+        "VALIDATE_TARGET",
+        "LOAD",
+        "VALIDATE_POST_LOAD",
+        "POST_MIGRATION_RECONCILIATION"
+      ],
+      "description": "Canonical step types in their required execution order"
+    },
+    "AgentRole": {
+      "type": "string",
+      "enum": ["orchestrator", "planning", "validation", "security", "execution", "debugging"],
+      "description": "Agent responsible for executing the step"
+    },
+    "MaintenanceWindow": {
+      "type": "object",
+      "required": ["start_utc", "end_utc"],
+      "additionalProperties": false,
+      "properties": {
+        "start_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC start time of the maintenance window"
+        },
+        "end_utc": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC end time of the maintenance window"
+        },
+        "timezone_label": {
+          "type": "string",
+          "default": "UTC",
+          "description": "Human-readable timezone label (e.g. 'America/New_York')"
+        }
+      }
+    },
+    "PlanStep": {
+      "type": "object",
+      "required": [
+        "step_id",
+        "step_type",
+        "description",
+        "agent_role",
+        "depends_on",
+        "estimated_duration_minutes",
+        "is_blocking"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "step_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this step"
+        },
+        "step_type": {
+          "$ref": "#/$defs/StepType"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 5,
+          "description": "Human-readable description of the step's activity"
+        },
+        "agent_role": {
+          "$ref": "#/$defs/AgentRole"
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "step_id values that must complete before this step begins"
+        },
+        "estimated_duration_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Optimistic wall-clock duration estimate in minutes"
+        },
+        "is_blocking": {
+          "type": "boolean",
+          "const": true,
+          "description": "All migration steps are blocking — downstream steps cannot start until this step passes"
+        }
+      }
+    },
+    "MigrationPlan": {
+      "type": "object",
+      "required": [
+        "plan_id",
+        "job_id",
+        "tenant_id",
+        "source_type",
+        "target_org",
+        "has_sox_scope",
+        "risk_level",
+        "requires_maintenance_window",
+        "total_estimated_minutes",
+        "steps",
+        "created_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "plan_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this plan version"
+        },
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration job identifier"
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tenant (org) identifier — enforces data isolation"
+        },
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "target_org": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target Salesforce org identifier"
+        },
+        "has_sox_scope": {
+          "type": "boolean",
+          "description": "True when this migration falls under SOX compliance scope"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "requires_maintenance_window": {
+          "type": "boolean",
+          "description": "True when the plan requires the target system to be offline"
+        },
+        "maintenance_window": {
+          "oneOf": [
+            { "$ref": "#/$defs/MaintenanceWindow" },
+            { "type": "null" }
+          ],
+          "description": "Populated when requires_maintenance_window is true"
+        },
+        "total_estimated_minutes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Critical-path (serial) duration for the entire plan"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/PlanStep" },
+          "description": "Ordered list of steps; graph semantics are encoded via depends_on"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp of plan creation"
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "PlanningAgent Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "PlanningAgentInput",
+      "description": "Request payload for the Planning Agent",
+      "required": [
+        "job_id",
+        "tenant_id",
+        "source_type",
+        "target_org",
+        "record_counts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration job identifier",
+          "examples": ["job-acme-2026-001"]
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Multi-tenant identifier",
+          "examples": ["tenant-acme"]
+        },
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "target_org": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target Salesforce org identifier",
+          "examples": ["acme-prod.my.salesforce.com"]
+        },
+        "record_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minProperties": 1,
+          "description": "Map of Salesforce object type to expected record count",
+          "examples": [
+            { "Account": 150000, "Contact": 450000, "Opportunity": 75000 }
+          ]
+        },
+        "has_sox_scope": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this migration falls under SOX compliance scope"
+        },
+        "maintenance_window": {
+          "oneOf": [
+            { "$ref": "#/$defs/MaintenanceWindow" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "description": "Optional maintenance window; null for online migrations"
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "title": "PlanningAgentResult",
+      "description": "Result returned by the Planning Agent",
+      "required": [
+        "plan_id",
+        "job_id",
+        "tenant_id",
+        "success",
+        "step_count",
+        "duration_ms",
+        "tokens_used",
+        "created_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "plan_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique plan identifier — set authoritatively by the agent, not the LLM"
+        },
+        "job_id": {
+          "type": "string",
+          "description": "Echoed from input"
+        },
+        "tenant_id": {
+          "type": "string",
+          "description": "Echoed from input"
+        },
+        "success": {
+          "type": "boolean",
+          "description": "True when a valid MigrationPlan was produced"
+        },
+        "plan": {
+          "oneOf": [
+            { "$ref": "#/$defs/MigrationPlan" },
+            { "type": "null" }
+          ],
+          "description": "The generated MigrationPlan; null when success is false"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Human-readable error description; required when success is false"
+        },
+        "step_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of steps in the generated plan"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Wall-clock execution time in milliseconds"
+        },
+        "tokens_used": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total tokens consumed by the LLM call"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 UTC timestamp"
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "input": {
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "source_type": "ORACLE_EBS",
+        "target_org": "acme-prod.my.salesforce.com",
+        "record_counts": {
+          "Account": 250000,
+          "Contact": 600000,
+          "Opportunity": 90000
+        },
+        "has_sox_scope": true,
+        "maintenance_window": {
+          "start_utc": "2026-03-20T02:00:00Z",
+          "end_utc": "2026-03-20T06:00:00Z",
+          "timezone_label": "America/New_York"
+        }
+      },
+      "output": {
+        "plan_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "success": true,
+        "plan": {
+          "plan_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+          "job_id": "job-acme-2026-001",
+          "tenant_id": "tenant-acme",
+          "source_type": "ORACLE_EBS",
+          "target_org": "acme-prod.my.salesforce.com",
+          "has_sox_scope": true,
+          "risk_level": "HIGH",
+          "requires_maintenance_window": true,
+          "maintenance_window": {
+            "start_utc": "2026-03-20T02:00:00Z",
+            "end_utc": "2026-03-20T06:00:00Z",
+            "timezone_label": "America/New_York"
+          },
+          "total_estimated_minutes": 425,
+          "created_at": "2026-03-16T12:00:00Z",
+          "steps": [
+            {
+              "step_id": "11111111-0000-0000-0000-000000000001",
+              "step_type": "PRE_MIGRATION_COMPLIANCE_CHECK",
+              "description": "SOX pre-migration compliance audit: verify data lineage, access controls, and audit trail configuration",
+              "agent_role": "security",
+              "depends_on": [],
+              "estimated_duration_minutes": 15,
+              "is_blocking": true
+            },
+            {
+              "step_id": "11111111-0000-0000-0000-000000000002",
+              "step_type": "EXTRACT",
+              "description": "JDBC batch extraction of Account, Contact, Opportunity from Oracle EBS across 940,000 records",
+              "agent_role": "execution",
+              "depends_on": ["11111111-0000-0000-0000-000000000001"],
+              "estimated_duration_minutes": 193,
+              "is_blocking": true
+            }
+          ]
+        },
+        "error": null,
+        "step_count": 8,
+        "duration_ms": 3210,
+        "tokens_used": 1874,
+        "created_at": "2026-03-16T12:00:03Z"
+      }
+    }
+  ]
+}

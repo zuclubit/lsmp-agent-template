@@ -1,0 +1,254 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "description": "Complete field mapping from legacy ERP account fields to Salesforce Account fields.",
+  "source_object": "erp.accounts",
+  "target_object": "Account",
+  "external_id_field": "Legacy_ID__c",
+  "upsert_key": "acct_id",
+  "fields": [
+    {
+      "legacy_field": "acct_id",
+      "salesforce_field": "Legacy_ID__c",
+      "transformation": "direct",
+      "required": true,
+      "is_external_id": true,
+      "notes": "Used as the upsert external ID. Must be a unique External ID field in Salesforce."
+    },
+    {
+      "legacy_field": "acct_name",
+      "salesforce_field": "Name",
+      "transformation": "trim",
+      "required": true,
+      "max_length": 255,
+      "notes": "Trim whitespace; truncate at 255 chars if necessary."
+    },
+    {
+      "legacy_field": "acct_type",
+      "salesforce_field": "Type",
+      "transformation": "lookup",
+      "required": false,
+      "lookup_table": {
+        "CUST": "Customer",
+        "PROS": "Prospect",
+        "PART": "Partner",
+        "COMP": "Competitor",
+        "OTHER": "Other"
+      },
+      "default_value": "Prospect",
+      "notes": "Map legacy code to Salesforce picklist label. Default to Prospect if unmapped."
+    },
+    {
+      "legacy_field": "acct_status",
+      "salesforce_field": null,
+      "transformation": "conditional_skip",
+      "required": false,
+      "condition": "Skip record migration if acct_status = 'S' (Suspended)",
+      "notes": "Suspended accounts are NOT migrated. Active (A), Inactive (I), Pending (P) are migrated. A custom Status__c field could be added if needed."
+    },
+    {
+      "legacy_field": "industry_code",
+      "salesforce_field": "Industry",
+      "transformation": "lookup",
+      "required": false,
+      "lookup_table": {
+        "TECH": "Technology",
+        "FIN": "Finance",
+        "HLTH": "Healthcare",
+        "MFG": "Manufacturing",
+        "RET": "Retail",
+        "GOVT": "Government",
+        "EDU": "Education",
+        "MEDIA": "Media",
+        "BANK": "Banking",
+        "INS": "Insurance",
+        "TRANS": "Transportation",
+        "UTIL": "Utilities",
+        "AGRI": "Agriculture",
+        "CONST": "Construction",
+        "HOSP": "Hospitality"
+      },
+      "default_value": "Other",
+      "notes": "Unmapped codes default to 'Other'."
+    },
+    {
+      "legacy_field": "bill_addr_street",
+      "salesforce_field": "BillingStreet",
+      "transformation": "concat_unit",
+      "required": false,
+      "concat_with": "bill_addr_unit",
+      "concat_separator": ", ",
+      "max_length": 255,
+      "notes": "Concatenate bill_addr_street and bill_addr_unit (if present) into BillingStreet."
+    },
+    {
+      "legacy_field": "bill_addr_unit",
+      "salesforce_field": null,
+      "transformation": "merged_into",
+      "required": false,
+      "merged_into_field": "bill_addr_street",
+      "notes": "Merged into BillingStreet via concat_unit transformation above."
+    },
+    {
+      "legacy_field": "bill_addr_city",
+      "salesforce_field": "BillingCity",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "bill_addr_state",
+      "salesforce_field": "BillingState",
+      "transformation": "uppercase",
+      "required": false,
+      "max_length": 80,
+      "notes": "Convert to uppercase. Salesforce requires full state name if State/Country Picklists are enabled."
+    },
+    {
+      "legacy_field": "bill_addr_zip",
+      "salesforce_field": "BillingPostalCode",
+      "transformation": "direct",
+      "required": false,
+      "max_length": 20
+    },
+    {
+      "legacy_field": "bill_addr_country",
+      "salesforce_field": "BillingCountry",
+      "transformation": "iso2_to_name",
+      "required": false,
+      "max_length": 80,
+      "lookup_table": {
+        "US": "United States",
+        "CA": "Canada",
+        "GB": "United Kingdom",
+        "AU": "Australia",
+        "DE": "Germany",
+        "FR": "France",
+        "JP": "Japan"
+      },
+      "default_value": "United States",
+      "notes": "Convert ISO-3166-1 alpha-2 to full country name if State/Country Picklists are enabled. Use direct if not."
+    },
+    {
+      "legacy_field": "ship_addr_street",
+      "salesforce_field": "ShippingStreet",
+      "transformation": "direct",
+      "required": false,
+      "max_length": 255
+    },
+    {
+      "legacy_field": "ship_addr_city",
+      "salesforce_field": "ShippingCity",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "ship_addr_state",
+      "salesforce_field": "ShippingState",
+      "transformation": "uppercase",
+      "required": false,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "ship_addr_zip",
+      "salesforce_field": "ShippingPostalCode",
+      "transformation": "direct",
+      "required": false,
+      "max_length": 20
+    },
+    {
+      "legacy_field": "ship_addr_country",
+      "salesforce_field": "ShippingCountry",
+      "transformation": "iso2_to_name",
+      "required": false,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "phone_number",
+      "salesforce_field": "Phone",
+      "transformation": "format_phone_e164",
+      "required": false,
+      "max_length": 40,
+      "notes": "Normalise to E.164 format if possible; otherwise pass through. Log warning if format is unrecognised."
+    },
+    {
+      "legacy_field": "fax_number",
+      "salesforce_field": "Fax",
+      "transformation": "format_phone_e164",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "website_url",
+      "salesforce_field": "Website",
+      "transformation": "ensure_https",
+      "required": false,
+      "max_length": 255,
+      "notes": "Prepend https:// if no scheme is present."
+    },
+    {
+      "legacy_field": "email_address",
+      "salesforce_field": "Email__c",
+      "transformation": "lowercase_trim",
+      "required": false,
+      "max_length": 254,
+      "validation": "email_format",
+      "notes": "Custom field. Must exist in target org. Convert to lowercase and trim."
+    },
+    {
+      "legacy_field": "annual_revenue",
+      "salesforce_field": "AnnualRevenue",
+      "transformation": "numeric_cast",
+      "required": false,
+      "data_type": "currency",
+      "notes": "Cast to float. Null if blank or non-numeric."
+    },
+    {
+      "legacy_field": "employee_count",
+      "salesforce_field": "NumberOfEmployees",
+      "transformation": "integer_cast",
+      "required": false,
+      "data_type": "integer",
+      "notes": "Cast to int. Null if blank."
+    },
+    {
+      "legacy_field": "acct_description",
+      "salesforce_field": "Description",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 32000
+    },
+    {
+      "legacy_field": null,
+      "salesforce_field": "AccountSource",
+      "transformation": "constant",
+      "constant_value": "Data Migration",
+      "required": false,
+      "notes": "Hard-coded to 'Data Migration' for all migrated records."
+    },
+    {
+      "legacy_field": null,
+      "salesforce_field": "OwnerId",
+      "transformation": "env_variable",
+      "env_variable": "SF_MIGRATION_OWNER_ID",
+      "required": false,
+      "notes": "Assign to the integration service account. Falls back to running user if not set."
+    }
+  ],
+  "post_migration_validations": [
+    {
+      "check": "count_match",
+      "description": "Total migrated accounts should equal total legacy active accounts",
+      "tolerance_percent": 1.0
+    },
+    {
+      "check": "external_id_uniqueness",
+      "description": "All Legacy_ID__c values must be unique in Salesforce after migration"
+    },
+    {
+      "check": "no_null_names",
+      "description": "No Account.Name should be null or empty after migration"
+    }
+  ]
+}

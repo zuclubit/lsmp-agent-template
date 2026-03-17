@@ -1,0 +1,118 @@
+# Tools Configuration — Migration Platform (2026)
+# Defines permission boundaries, rate limits, and security constraints per tool.
+
+tools:
+
+  api-client-tool:
+    description: "Secure HTTP client with circuit breaker, rate limiter, and schema validation"
+    allowed_hosts:
+      - api.migration.internal
+      - kafka-exporter.internal
+      - spire-agent.internal
+      - vault.internal
+    rate_limit_per_minute: 60
+    circuit_breaker_threshold: 5
+    circuit_breaker_recovery_timeout_seconds: 60
+    timeout_seconds: 30
+    max_retries: 3
+    backoff_factor: 2.0
+    initial_delay_seconds: 1.0
+    max_delay_seconds: 60.0
+    audit_logging: required
+    log_payloads: false
+    log_request_bodies: false
+    log_response_bodies: false
+    tls_required: true
+    auth: bearer_token_via_env
+    per_service_rate_limits:
+      salesforce: 100/minute
+      migration-api: 500/minute
+      kafka-exporter: 200/minute
+      vault: 60/minute
+    retry_on:
+      - TRANSIENT_ERROR
+      - TIMEOUT
+      - RATE_LIMIT_EXCEEDED
+      - "503"
+      - "429"
+      - "502"
+    no_retry_on:
+      - "400"
+      - "401"
+      - "403"
+      - "404"
+
+  file-system-tool:
+    description: "Read-only file access scoped to whitelisted directories"
+    access_mode: read_only
+    allowed_directories:
+      - "/Users/oscarvalois/Documents/Github/s-agent/agents"
+      - "/Users/oscarvalois/Documents/Github/s-agent/config"
+      - "/Users/oscarvalois/Documents/Github/s-agent/docs"
+      - "/Users/oscarvalois/Documents/Github/s-agent/security"
+      - "/Users/oscarvalois/Documents/Github/s-agent/halcon"
+      - "/Users/oscarvalois/Documents/Github/s-agent/tools"
+      - "/Users/oscarvalois/Documents/Github/s-agent/context-servers"
+      - "/Users/oscarvalois/Documents/Github/s-agent/architecture"
+      - "/Users/oscarvalois/Documents/Github/s-agent/monitoring"
+      - "/var/data/migration/"
+      - "/tmp/migration-work/"
+    max_file_size_bytes: 1048576
+    allowed_extensions:
+      - .py
+      - .yaml
+      - .yml
+      - .json
+      - .md
+      - .txt
+    denied_path_patterns:
+      - ".*\\.env$"
+      - ".*\\.pem$"
+      - ".*\\.key$"
+      - ".*\\.p12$"
+      - ".*id_rsa.*"
+      - ".*credentials.*"
+      - ".*/\\.git/.*"
+      - ".*/__pycache__/.*"
+      - ".*\\.pyc$"
+    path_traversal_protection: true
+    write_operations_permitted: false
+    audit_access: true
+
+  validation-tool:
+    description: "Real data quality validation against PostgreSQL, Salesforce, and Kafka"
+    data_sources:
+      postgresql:
+        access_mode: read_only
+        connection_via: "MIGRATION_DB_URL env var"
+        query_type: parameterized_only
+        timeout_seconds: 30
+      salesforce:
+        access_mode: read_only
+        query_type: soql_select_only
+        timeout_seconds: 30
+        api_version: v59.0
+      kafka_metrics:
+        access_mode: read_only
+        endpoint_via: "KAFKA_METRICS_API env var"
+        timeout_seconds: 10
+    stub_data_allowed: false
+    random_data_allowed: false
+    default_sample_size: 500
+    max_sample_size: 5000
+    post_load_sample_rate: 0.01
+    null_rate_threshold_default: 0.05
+    discrepancy_rate_threshold_default: 0.001
+    audit_logging: true
+
+# ---------------------------------------------------------------------------
+# Global Tool Policies
+# ---------------------------------------------------------------------------
+
+global_policies:
+  pii_safe_logging: true
+  audit_all_tool_calls: true
+  structured_errors_only: true
+  no_raw_exceptions_to_agents: true
+  circuit_breaker_state_shared: false
+  tool_call_timeout_default_seconds: 60

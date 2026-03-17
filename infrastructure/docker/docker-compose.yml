@@ -1,0 +1,311 @@
+###############################################################################
+# docker-compose.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Full local development environment
+# Services: postgres, kafka, zookeeper, redis, api-gateway, migration-worker,
+#           kafka-ui, pgadmin
+###############################################################################
+
+version: "3.9"
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+
+networks:
+  migration-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  kafka-data:
+    driver: local
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15 — staging database, audit logs, migration state
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15.6-alpine
+    container_name: sfmigration-postgres
+    <<: *restart-policy
+    environment:
+      POSTGRES_DB: sfmigration
+      POSTGRES_USER: sfmigrationadmin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Dev_P@ssw0rd_2024!}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-scripts/postgres/:/docker-entrypoint-initdb.d/:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U sfmigrationadmin -d sfmigration"]
+    logging: *default-logging
+    command: >
+      postgres
+        -c max_connections=200
+        -c shared_buffers=256MB
+        -c effective_cache_size=1GB
+        -c maintenance_work_mem=64MB
+        -c checkpoint_completion_target=0.9
+        -c wal_buffers=16MB
+        -c default_statistics_target=100
+        -c random_page_cost=1.1
+        -c effective_io_concurrency=200
+        -c log_statement=all
+        -c log_duration=on
+        -c log_min_duration_statement=500
+
+  # ---------------------------------------------------------------------------
+  # ZooKeeper — Kafka coordination
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: sfmigration-zookeeper
+    <<: *restart-policy
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+      ZOOKEEPER_MAX_CLIENT_CNXNS: 60
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    ports:
+      - "2181:2181"
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka — event streaming for migration pipeline
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: sfmigration-kafka
+    <<: *restart-policy
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 300000
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 6
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Redis 7 — distributed caching, deduplication, rate limiting
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: sfmigration-redis
+    <<: *restart-policy
+    command: >
+      redis-server
+        --requirepass ${REDIS_PASSWORD:-DevRedis_P@ss_2024}
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
+        --save 60 1000
+        --loglevel notice
+        --protected-mode yes
+        --bind 0.0.0.0
+        --tls-port 0
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-DevRedis_P@ss_2024}", "ping"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # API Gateway — FastAPI integration service
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ../../
+      dockerfile: infrastructure/docker/Dockerfile.api
+      args:
+        BUILD_VERSION: local-dev
+        GIT_COMMIT: dev
+    image: sfmigration-api:local
+    container_name: sfmigration-api
+    <<: *restart-policy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Application
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+      # Database
+      DATABASE_URL: postgresql+asyncpg://sfmigrationadmin:${POSTGRES_PASSWORD:-Dev_P@ssw0rd_2024!}@postgres:5432/sfmigration
+      DATABASE_POOL_SIZE: 20
+      DATABASE_MAX_OVERFLOW: 10
+      # Redis
+      REDIS_URL: redis://:${REDIS_PASSWORD:-DevRedis_P@ss_2024}@redis:6379/0
+      # Kafka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: api-gateway-cg
+      # Salesforce (override with real creds in .env file)
+      SF_INSTANCE_URL: ${SF_INSTANCE_URL:-https://test.salesforce.com}
+      SF_CLIENT_ID: ${SF_CLIENT_ID:-placeholder}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-placeholder}
+      SF_API_VERSION: "59.0"
+      # Uvicorn
+      UVICORN_WORKERS: "2"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../src:/app/src:ro
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8000/livez"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Migration Worker — ETL pipeline service
+  # ---------------------------------------------------------------------------
+  migration-worker:
+    build:
+      context: ../../
+      dockerfile: infrastructure/docker/Dockerfile.migration
+      args:
+        BUILD_VERSION: local-dev
+        GIT_COMMIT: dev
+    image: sfmigration-worker:local
+    container_name: sfmigration-worker
+    <<: *restart-policy
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: postgresql+asyncpg://sfmigrationadmin:${POSTGRES_PASSWORD:-Dev_P@ssw0rd_2024!}@postgres:5432/sfmigration
+      REDIS_URL: redis://:${REDIS_PASSWORD:-DevRedis_P@ss_2024}@redis:6379/1
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_CONSUMER_GROUP: migration-worker-cg
+      KAFKA_INPUT_TOPIC: migration.jobs
+      KAFKA_OUTPUT_TOPIC: migration.results
+      SF_INSTANCE_URL: ${SF_INSTANCE_URL:-https://test.salesforce.com}
+      SF_CLIENT_ID: ${SF_CLIENT_ID:-placeholder}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-placeholder}
+      SF_API_VERSION: "59.0"
+      # Legacy source system
+      LEGACY_DB_URL: ${LEGACY_DB_URL:-postgresql://legacyadmin:legacypass@legacy-db:5433/legacydb}
+      BATCH_SIZE: "500"
+      WORKER_CONCURRENCY: "4"
+    ports:
+      - "8080:8080"    # Health check port
+    volumes:
+      - ../../src:/app/src:ro
+    networks:
+      - migration-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Kafka UI — development tooling (not for prod)
+  # ---------------------------------------------------------------------------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.1
+    container_name: sfmigration-kafka-ui
+    <<: *restart-policy
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      AUTH_TYPE: DISABLED
+    ports:
+      - "9090:8080"
+    networks:
+      - migration-net
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # pgAdmin — database administration UI (not for prod)
+  # ---------------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:8.4
+    container_name: sfmigration-pgadmin
+    <<: *restart-policy
+    depends_on:
+      - postgres
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@localdev.com
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-PgAdmin_Dev_2024}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    volumes:
+      - ./pgadmin-servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "5050:80"
+    networks:
+      - migration-net
+    logging: *default-logging

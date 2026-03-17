@@ -1,0 +1,355 @@
+---
+# Application Configuration — Legacy to Salesforce Migration
+# Version: 1.2.0
+# Last Updated: 2026-03-16
+# Managed by: Platform Engineering Team
+#
+# This file contains non-secret application configuration.
+# Secrets are loaded from Vault/environment variables at runtime.
+# Environment-specific overrides via environment variables (see settings.py).
+
+# ============================================================
+# APPLICATION METADATA
+# ============================================================
+app:
+  name: "migration-platform"
+  title: "Legacy to Salesforce Migration Platform"
+  description: "Enterprise migration pipeline for CRM data migration"
+  contact_email: "migration-team@company.com"
+
+# ============================================================
+# API CONFIGURATION
+# ============================================================
+api:
+  # Request handling
+  max_request_size_mb: 50
+  request_timeout_seconds: 120
+  keep_alive_timeout_seconds: 75
+
+  # Pagination defaults
+  default_page_size: 50
+  max_page_size: 1000
+
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    strategy: "sliding_window"
+    per_user_requests_per_minute: 200
+    per_user_burst: 50
+    global_requests_per_second: 1000
+    whitelist_roles: ["api-service", "migration-admin"]
+
+  # CORS
+  cors:
+    allow_credentials: true
+    allow_methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    allow_headers: ["Authorization", "Content-Type", "X-Correlation-ID", "X-Justification", "X-Request-ID"]
+    max_age_seconds: 3600
+
+  # Documentation
+  docs_enabled: true
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+  openapi_url: "/openapi.json"
+
+# ============================================================
+# MIGRATION ENGINE CONFIGURATION
+# ============================================================
+migration:
+  # Batch processing
+  batch:
+    default_size: 2000
+    min_size: 100
+    max_size: 10000
+    adaptive_sizing:
+      enabled: true
+      target_duration_seconds: 30  # Target 30s per batch
+      increase_factor: 1.25
+      decrease_factor: 0.75
+
+  # Parallelism
+  parallelism:
+    max_concurrent_jobs: 5
+    max_concurrent_phases_per_job: 2
+    worker_pool_size: 20
+
+  # Retry policy
+  retry:
+    max_attempts: 5
+    backoff_strategy: "exponential_jitter"
+    initial_delay_seconds: 5
+    max_delay_seconds: 300
+    jitter_factor: 0.3
+    # Retry on these HTTP status codes
+    retry_on_status_codes: [408, 429, 500, 502, 503, 504]
+    # Retry on these exception types
+    retry_on_exceptions:
+      - "ConnectionError"
+      - "Timeout"
+      - "ServiceUnavailableError"
+
+  # Timeout configuration
+  timeouts:
+    extraction_phase_hours: 12
+    transformation_phase_hours: 4
+    loading_phase_hours: 24
+    validation_phase_hours: 4
+    overall_job_hours: 72
+
+  # Checkpointing
+  checkpointing:
+    enabled: true
+    interval_records: 10000
+    interval_seconds: 300
+    storage: "postgres"  # postgres, redis
+
+  # Error handling
+  error_handling:
+    max_error_rate_percent: 2.0
+    pause_on_error_rate_breach: true
+    dead_letter_queue_enabled: true
+    dead_letter_queue_ttl_days: 30
+    auto_resume_after_error_rate_drop: false
+
+  # Data validation
+  validation:
+    enabled: true
+    strict_mode: false  # If true, any validation failure fails the batch
+    validate_before_transform: true
+    validate_after_transform: true
+    max_validation_errors_per_batch: 100
+    schema_validation_enabled: true
+
+  # Approval workflow
+  approval:
+    required_for_production: true
+    required_for_staging: true
+    required_for_dev: false
+    approval_timeout_hours: 4
+    notify_approvers_slack: true
+    approver_roles: ["migration-admin"]
+
+# ============================================================
+# SALESFORCE CONFIGURATION
+# ============================================================
+salesforce:
+  # API settings
+  api:
+    version: "59.0"
+    bulk_api_version: 2
+    rest_api_max_connections: 20
+    bulk_api_max_jobs: 5
+
+  # Bulk API settings
+  bulk:
+    max_batch_size: 10000
+    max_job_records: 150000000  # SF Bulk API v2 limit
+    poll_interval_seconds: 10
+    job_timeout_hours: 12
+
+  # Rate limiting awareness
+  rate_limit:
+    daily_api_limit_buffer: 1000  # Stop when this many calls remain
+    concurrent_calls_limit: 25
+    bulk_concurrent_jobs_limit: 5
+
+  # Object-specific configuration
+  objects:
+    Account:
+      batch_size: 5000
+      load_operation: "upsert"
+      upsert_external_id_field: "LegacyAccountId__c"
+      required_fields: ["Name", "Type", "LegacyAccountId__c"]
+      exclude_from_validation: []
+
+    Contact:
+      batch_size: 5000
+      load_operation: "upsert"
+      upsert_external_id_field: "LegacyContactId__c"
+      required_fields: ["LastName", "AccountId", "LegacyContactId__c"]
+
+    Opportunity:
+      batch_size: 2000
+      load_operation: "upsert"
+      upsert_external_id_field: "LegacyOpportunityId__c"
+      required_fields: ["Name", "AccountId", "StageName", "CloseDate"]
+
+    Case:
+      batch_size: 2000
+      load_operation: "upsert"
+      upsert_external_id_field: "LegacyCaseId__c"
+      required_fields: ["Subject", "AccountId", "Status", "Origin"]
+
+# ============================================================
+# DATABASE CONFIGURATION
+# ============================================================
+database:
+  legacy_db:
+    driver: "mssql"
+    pool:
+      min_connections: 10
+      max_connections: 50
+      max_idle_time_seconds: 300
+      connection_timeout_seconds: 15
+      query_timeout_seconds: 300
+
+  postgres:
+    driver: "asyncpg"
+    pool:
+      min_connections: 10
+      max_connections: 100
+      max_idle_time_seconds: 300
+      connection_timeout_seconds: 10
+
+  # Query optimization
+  query:
+    default_fetch_size: 1000
+    large_table_fetch_size: 5000
+    enable_query_hints: true
+    enable_index_hints: true
+
+# ============================================================
+# CIRCUIT BREAKER CONFIGURATION
+# ============================================================
+circuit_breaker:
+  salesforce_api:
+    failure_threshold: 5
+    success_threshold: 2
+    timeout_seconds: 60
+    half_open_max_calls: 3
+
+  legacy_db:
+    failure_threshold: 3
+    success_threshold: 2
+    timeout_seconds: 30
+    half_open_max_calls: 2
+
+  kafka:
+    failure_threshold: 10
+    success_threshold: 3
+    timeout_seconds: 30
+
+  vault:
+    failure_threshold: 3
+    success_threshold: 1
+    timeout_seconds: 60
+
+# ============================================================
+# CACHE CONFIGURATION
+# ============================================================
+cache:
+  default_ttl_seconds: 300
+
+  ttls:
+    salesforce_field_metadata: 3600     # 1 hour
+    salesforce_picklist_values: 3600
+    salesforce_record_types: 3600
+    legacy_db_lookup_tables: 1800       # 30 min
+    rbac_permissions: 300               # 5 min
+    secrets: 300                        # 5 min
+    feature_flags: 60                   # 1 min
+    migration_job_status: 30            # 30 sec
+
+  # Cache warming on startup
+  warm_on_startup:
+    - "salesforce_field_metadata"
+    - "salesforce_picklist_values"
+    - "salesforce_record_types"
+    - "legacy_db_lookup_tables"
+
+# ============================================================
+# LOGGING AND OBSERVABILITY
+# ============================================================
+logging:
+  structured: true
+  include_caller: false  # Disable in production for performance
+  max_message_length: 2000
+
+  # Sampling for high-volume events
+  sampling:
+    debug: 0.0      # No debug logs in production
+    info: 1.0
+    warning: 1.0
+    error: 1.0
+
+  # Fields to always redact
+  sensitive_fields:
+    - password
+    - secret
+    - token
+    - api_key
+    - ssn
+    - credit_card
+    - bank_account
+
+tracing:
+  sample_rate: 0.1
+  max_span_events: 128
+  max_span_links: 128
+
+# ============================================================
+# HEALTH CHECK CONFIGURATION
+# ============================================================
+health_checks:
+  enabled: true
+  interval_seconds: 30
+  timeout_seconds: 10
+  failure_threshold: 3
+
+  checks:
+    legacy_db:
+      enabled: true
+      query: "SELECT 1"
+      timeout_seconds: 5
+    postgres:
+      enabled: true
+      timeout_seconds: 5
+    kafka:
+      enabled: true
+      timeout_seconds: 10
+    redis:
+      enabled: true
+      timeout_seconds: 5
+    vault:
+      enabled: true
+      timeout_seconds: 10
+    salesforce:
+      enabled: true
+      timeout_seconds: 30
+      check_interval_seconds: 60  # Less frequent for external
+
+# ============================================================
+# NOTIFICATION CONFIGURATION
+# ============================================================
+notifications:
+  channels:
+    slack:
+      enabled: true
+      # Channels defined per alert type
+      channels:
+        critical: "#migration-alerts-critical"
+        warning: "#migration-alerts"
+        info: "#migration-updates"
+      mention_on_critical: "@migration-oncall"
+
+    email:
+      enabled: true
+      from: "migration-platform@company.com"
+      reply_to: "migration-team@company.com"
+
+    pagerduty:
+      enabled: true
+      # Only P0/P1 alerts
+      min_severity: "critical"
+
+  # Events that trigger notifications
+  events:
+    migration_started: [slack_info]
+    migration_completed: [slack_info, email]
+    migration_failed: [slack_critical, email, pagerduty]
+    migration_paused: [slack_warning]
+    sla_breach: [slack_critical, pagerduty]
+    error_rate_breach: [slack_critical, pagerduty]
+    dlq_threshold: [slack_warning]
+    sf_rate_limit_warning: [slack_warning]
+    sf_rate_limit_critical: [slack_critical, pagerduty]

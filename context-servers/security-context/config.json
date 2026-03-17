@@ -1,0 +1,75 @@
+{
+  "server_id": "security-context",
+  "version": "2.0.0",
+  "description": "Security policy and access control context server — never serves secret values",
+
+  "transport": {
+    "type": "stdio",
+    "encoding": "utf-8"
+  },
+
+  "security_contract": {
+    "serves_secret_values": false,
+    "serves_vault_paths_only": true,
+    "all_access_checks_audited": true,
+    "audit_log_tamper_evident": true
+  },
+
+  "allowed_directories": [
+    "/Users/oscarvalois/Documents/Github/s-agent/agents",
+    "/Users/oscarvalois/Documents/Github/s-agent/config",
+    "/Users/oscarvalois/Documents/Github/s-agent/docs",
+    "/Users/oscarvalois/Documents/Github/s-agent/security",
+    "/Users/oscarvalois/Documents/Github/s-agent/halcon",
+    "/Users/oscarvalois/Documents/Github/s-agent/tools",
+    "/Users/oscarvalois/Documents/Github/s-agent/context-servers"
+  ],
+
+  "allowed_extensions": [".py", ".yaml", ".yml", ".json", ".md", ".txt"],
+
+  "max_file_size_bytes": 1048576,
+
+  "rbac_policy": {
+    "operations": {
+      "MIGRATE_CHUNK":       ["migration_operator", "migration_admin"],
+      "EXECUTE_MIGRATION":   ["migration_operator", "migration_admin"],
+      "ROLLBACK":            ["migration_admin"],
+      "HIGH_RISK_EXECUTION": ["migration_admin"],
+      "FORCE_DELETE":        ["migration_admin"],
+      "OVERRIDE_GATE":       ["migration_admin"],
+      "VALIDATE_SOURCE":     ["migration_operator", "migration_admin", "security_auditor"],
+      "VALIDATE_TARGET":     ["migration_operator", "migration_admin", "security_auditor"],
+      "SECRETS_SCAN":        ["security_auditor", "migration_admin"],
+      "DEPENDENCY_AUDIT":    ["security_auditor", "migration_admin"],
+      "API_SECURITY_CHECK":  ["security_auditor", "migration_admin"],
+      "SOQL_AUDIT":          ["security_auditor", "migration_admin"],
+      "READ_LOGS":           ["migration_operator", "migration_admin", "security_auditor", "readonly"],
+      "READ_SCHEMA":         ["migration_operator", "migration_admin", "security_auditor"]
+    }
+  },
+
+  "vault_secret_manifest": {
+    "_global": {
+      "migration_api_token":       "secret/services/migration-api/token",
+      "kafka_bootstrap_servers":   "secret/kafka/bootstrap-servers",
+      "kafka_sasl_credentials":    "secret/kafka/sasl-credentials",
+      "spire_agent_socket":        "secret/spire/agent-socket-path"
+    }
+  },
+
+  "audit": {
+    "log_path": ".halcon/audit/security-context.jsonl",
+    "rotation": "daily",
+    "retention_days": 365,
+    "tamper_detection": "sha256_chained",
+    "log_all_denials": true,
+    "log_all_approvals": true,
+    "log_vault_name_lookups": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_trace_id": true
+  }
+}

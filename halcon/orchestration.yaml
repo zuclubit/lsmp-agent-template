@@ -1,0 +1,436 @@
+# Halcon Orchestration Configuration
+# Version: 2.0.0
+# Schema Version: halcon/v2
+#
+# Halcon tracks agent session performance via retrospectives.
+# This config defines:
+#   1. Workflow definitions with agent routing
+#   2. Retry and fallback policies
+#   3. State machine for migration orchestration
+#   4. Metrics collection for retrospectives
+#
+# Halcon session metrics tracked:
+#   convergence_efficiency: how quickly agents reach correct decision (0-1)
+#   decision_density: decisions made per iteration (higher = more focused)
+#   adaptation_utilization: fraction of iterations where agent changed course
+#   dominant_failure_mode: most common failure type string
+#   evidence_trajectory: "monotonic" | "oscillating" | "plateaued"
+#   final_utility: 0-1 score of overall session usefulness
+
+halcon:
+  version: "2.0.0"
+  schema_version: "halcon/v2"
+  environment: production
+  cluster_id: "${HALCON_CLUSTER_ID}"
+  retrospectives_path: ".halcon/retrospectives/sessions.jsonl"
+
+# ---------------------------------------------------------------------------
+# Workflow Definitions
+# ---------------------------------------------------------------------------
+workflows:
+
+  migration_run:
+    description: "Full end-to-end data migration from source system to Salesforce"
+    version: "2.0.0"
+    entry_point: pre_validation
+    timeout_minutes: 480
+    stages:
+      - name: pre_validation
+        agent: validation-agent
+        description: "Validate source data completeness and schema conformance"
+        inputs:
+          - migration_id
+          - source_connection_string
+          - source_schema_manifest
+        outputs:
+          - validation_report
+          - source_record_count
+          - schema_diff_report
+        blocking_gates:
+          - gate: source_completeness_gate
+            condition: "validation_report.gate1_passed == true"
+            on_fail: BLOCK
+        timeout_minutes: 60
+
+      - name: planning
+        agent: orchestrator-agent
+        description: "Build migration execution plan with chunking and ordering"
+        inputs:
+          - validation_report
+          - source_record_count
+          - migration_config
+        outputs:
+          - execution_plan
+          - estimated_duration_minutes
+          - chunk_manifest
+        blocking_gates:
+          - gate: plan_approval_gate
+            condition: "execution_plan.risk_level != 'HIGH' OR human_approval == true"
+            on_fail: ESCALATE_TO_HUMAN
+        timeout_minutes: 30
+
+      - name: security_gate
+        agent: security-agent
+        description: "Security audit before any data movement"
+        inputs:
+          - execution_plan
+          - migration_config
+          - source_connection_string
+        outputs:
+          - security_audit_report
+          - approved_for_execution
+        blocking_gates:
+          - gate: security_clearance_gate
+            condition: "security_audit_report.critical_findings == 0"
+            on_fail: BLOCK
+        timeout_minutes: 45
+
+      - name: execution
+        agent: migration-agent
+        description: "Execute data migration in chunks via Kafka pipeline"
+        inputs:
+          - execution_plan
+          - chunk_manifest
+          - security_audit_report
+        outputs:
+          - migration_result
+          - records_migrated
+          - dlq_count
+          - error_manifest
+        blocking_gates:
+          - gate: execution_threshold_gate
+            condition: "migration_result.success_rate >= 0.99"
+            on_fail: ROLLBACK
+        timeout_minutes: 360
+
+      - name: post_validation
+        agent: validation-agent
+        description: "Validate migrated data in target Salesforce org"
+        inputs:
+          - migration_result
+          - source_record_count
+          - execution_plan
+        outputs:
+          - post_migration_report
+          - reconciliation_report
+          - final_record_count
+        blocking_gates:
+          - gate: post_load_sample_gate
+            condition: "post_migration_report.gate3_passed == true"
+            on_fail: ESCALATE_TO_HUMAN
+        timeout_minutes: 90
+
+  validation_run:
+    description: "Standalone validation workflow — no data movement"
+    version: "2.0.0"
+    entry_point: source_completeness
+    timeout_minutes: 120
+    stages:
+      - name: source_completeness
+        agent: validation-agent
+        inputs: [migration_id, source_connection_string]
+        outputs: [gate1_result, source_record_count, schema_diff]
+        blocking_gates:
+          - gate: gate1_source_completeness
+            condition: "gate1_result.passed == true"
+            on_fail: REPORT_AND_STOP
+        timeout_minutes: 45
+
+      - name: target_validity
+        agent: validation-agent
+        inputs: [migration_config, salesforce_credentials]
+        outputs: [gate2_result, target_capacity_report]
+        blocking_gates:
+          - gate: gate2_target_validity
+            condition: "gate2_result.passed == true"
+            on_fail: REPORT_AND_STOP
+        timeout_minutes: 30
+
+      - name: post_load_sample
+        agent: validation-agent
+        inputs: [sample_migration_id, source_sample, target_org]
+        outputs: [gate3_result, sample_reconciliation]
+        blocking_gates:
+          - gate: gate3_post_load_sample
+            condition: "gate3_result.passed == true"
+            on_fail: REPORT_AND_STOP
+        timeout_minutes: 45
+
+  security_audit:
+    description: "Security audit workflow — no migration, audit only"
+    version: "2.0.0"
+    entry_point: secrets_scan
+    timeout_minutes: 60
+    stages:
+      - name: secrets_scan
+        agent: security-agent
+        inputs: [repository_path, config_paths]
+        outputs: [secrets_scan_report]
+        blocking_gates:
+          - gate: no_leaked_secrets
+            condition: "secrets_scan_report.leaked_secrets == 0"
+            on_fail: BLOCK
+        timeout_minutes: 15
+
+      - name: dependency_audit
+        agent: security-agent
+        inputs: [requirements_files, lock_files]
+        outputs: [dependency_audit_report]
+        blocking_gates:
+          - gate: no_critical_cves
+            condition: "dependency_audit_report.critical_cves == 0"
+            on_fail: BLOCK
+        timeout_minutes: 15
+
+      - name: api_security
+        agent: security-agent
+        inputs: [api_endpoints, auth_config]
+        outputs: [api_security_report]
+        blocking_gates:
+          - gate: api_auth_enforced
+            condition: "api_security_report.unauthenticated_endpoints == 0"
+            on_fail: BLOCK
+        timeout_minutes: 15
+
+      - name: soql_injection_check
+        agent: security-agent
+        inputs: [soql_query_files, agent_code_paths]
+        outputs: [injection_audit_report]
+        blocking_gates:
+          - gate: no_injection_vectors
+            condition: "injection_audit_report.injection_risks == 0"
+            on_fail: BLOCK
+        timeout_minutes: 15
+
+  debugging_run:
+    description: "Diagnostic workflow for failed or stalled migrations"
+    version: "2.0.0"
+    entry_point: triage
+    timeout_minutes: 60
+    stages:
+      - name: triage
+        agent: debugging-agent
+        inputs: [migration_id, error_manifest, logs_path]
+        outputs: [triage_report, failure_classification]
+        blocking_gates: []
+        timeout_minutes: 20
+
+      - name: root_cause_analysis
+        agent: debugging-agent
+        inputs: [triage_report, failure_classification]
+        outputs: [rca_report, recommended_remediation]
+        blocking_gates: []
+        timeout_minutes: 30
+
+      - name: remediation_plan
+        agent: orchestrator-agent
+        inputs: [rca_report, recommended_remediation, migration_config]
+        outputs: [remediation_plan, requires_human_approval]
+        blocking_gates:
+          - gate: human_approval_for_remediation
+            condition: "requires_human_approval == false OR human_approval == true"
+            on_fail: ESCALATE_TO_HUMAN
+        timeout_minutes: 10
+
+# ---------------------------------------------------------------------------
+# Retry Policy
+# ---------------------------------------------------------------------------
+retry_policy:
+  default:
+    max_attempts: 3
+    backoff_factor: 2.0
+    initial_delay_seconds: 5
+    max_delay_seconds: 120
+    retry_on:
+      - "TRANSIENT_ERROR"
+      - "TIMEOUT"
+      - "RATE_LIMIT_EXCEEDED"
+      - "503"
+      - "429"
+      - "502"
+    no_retry_on:
+      - "VALIDATION_FAILURE"
+      - "SECURITY_BLOCK"
+      - "AUTHENTICATION_ERROR"
+      - "SCHEMA_MISMATCH"
+      - "400"
+      - "401"
+      - "403"
+
+  per_agent:
+    migration-agent:
+      max_attempts: 2
+      backoff_factor: 3.0
+      initial_delay_seconds: 30
+    security-agent:
+      max_attempts: 1
+      backoff_factor: 1.0
+      initial_delay_seconds: 0
+    validation-agent:
+      max_attempts: 3
+      backoff_factor: 2.0
+      initial_delay_seconds: 10
+
+# ---------------------------------------------------------------------------
+# Fallback Policy
+# ---------------------------------------------------------------------------
+fallback_policy:
+  on_agent_failure:
+    orchestrator-agent: ESCALATE_TO_HUMAN
+    migration-agent: ROLLBACK_AND_ESCALATE
+    validation-agent: BLOCK_AND_REPORT
+    security-agent: BLOCK
+    debugging-agent: REPORT_AND_CONTINUE
+    documentation-agent: SKIP
+
+  on_gate_failure:
+    BLOCK: "Stop workflow, write failure report to retrospective, alert on-call"
+    ESCALATE_TO_HUMAN: "Pause workflow, send PagerDuty alert, await operator decision"
+    ROLLBACK: "Trigger rollback steps, then BLOCK"
+    ROLLBACK_AND_ESCALATE: "Trigger rollback steps, then ESCALATE_TO_HUMAN"
+    REPORT_AND_STOP: "Write report, terminate workflow without rollback"
+    REPORT_AND_CONTINUE: "Write warning, continue to next stage"
+    SKIP: "Skip current stage, proceed to next"
+
+# ---------------------------------------------------------------------------
+# State Machine
+# ---------------------------------------------------------------------------
+state_machine:
+  initial_state: IDLE
+  states:
+    IDLE:
+      description: "No active migration"
+      allowed_transitions: [INITIALIZING]
+
+    INITIALIZING:
+      description: "Loading config, validating prerequisites"
+      allowed_transitions: [PRE_VALIDATING, FAILED]
+
+    PRE_VALIDATING:
+      description: "Running gate1 and gate2 validation"
+      allowed_transitions: [PLANNING, FAILED, BLOCKED]
+
+    PLANNING:
+      description: "Orchestrator building execution plan"
+      allowed_transitions: [SECURITY_AUDITING, AWAITING_HUMAN, FAILED]
+
+    SECURITY_AUDITING:
+      description: "Security agent running audit"
+      allowed_transitions: [EXECUTING, BLOCKED, FAILED]
+
+    AWAITING_HUMAN:
+      description: "Paused — human decision required"
+      allowed_transitions: [PLANNING, SECURITY_AUDITING, EXECUTING, CANCELLED, FAILED]
+
+    EXECUTING:
+      description: "Active data migration in progress"
+      allowed_transitions: [POST_VALIDATING, ROLLING_BACK, FAILED]
+
+    POST_VALIDATING:
+      description: "Running gate3 post-load sample validation"
+      allowed_transitions: [COMPLETED, FAILED, AWAITING_HUMAN]
+
+    ROLLING_BACK:
+      description: "Executing rollback steps"
+      allowed_transitions: [ROLLED_BACK, FAILED]
+
+    ROLLED_BACK:
+      description: "Rollback complete"
+      terminal: true
+
+    COMPLETED:
+      description: "Migration successful"
+      terminal: true
+
+    FAILED:
+      description: "Unrecoverable failure"
+      terminal: true
+
+    BLOCKED:
+      description: "Blocked by gate or security finding"
+      terminal: true
+
+    CANCELLED:
+      description: "Cancelled by operator"
+      terminal: true
+
+  terminal_states: [ROLLED_BACK, COMPLETED, FAILED, BLOCKED, CANCELLED]
+
+# ---------------------------------------------------------------------------
+# Metrics Configuration (Halcon Retrospectives)
+# ---------------------------------------------------------------------------
+metrics_config:
+  collection_interval_seconds: 30
+  aggregation_windows: [300, 900, 3600]  # 5min, 15min, 1hr
+
+  session_metrics:
+    convergence_efficiency:
+      description: "How quickly agent reaches correct decision (0-1)"
+      type: gauge
+      threshold_warn: 0.7
+      threshold_critical: 0.4
+
+    decision_density:
+      description: "Decisions made per iteration"
+      type: gauge
+      target_min: 0.3
+      target_max: 0.7
+
+    adaptation_utilization:
+      description: "Fraction of iterations where agent changed course"
+      type: gauge
+      threshold_warn: 0.6
+      threshold_critical: 0.8
+
+    dominant_failure_mode:
+      description: "Most common failure type in session"
+      type: label
+
+    evidence_trajectory:
+      description: "Shape of evidence accumulation"
+      type: enum
+      values: [monotonic, oscillating, plateaued]
+
+    final_utility:
+      description: "Overall session usefulness (0-1)"
+      type: gauge
+      threshold_warn: 0.6
+      threshold_critical: 0.4
+
+  pipeline_metrics:
+    records_migrated_total: counter
+    records_failed_total: counter
+    dlq_depth: gauge
+    kafka_consumer_lag: gauge
+    salesforce_api_calls_remaining: gauge
+    chunk_processing_duration_seconds: histogram
+
+  export:
+    format: jsonl
+    path: ".halcon/retrospectives/sessions.jsonl"
+    rotation: daily
+    retention_days: 90
+    compress_after_days: 7
+
+# ---------------------------------------------------------------------------
+# Agent Timeouts
+# ---------------------------------------------------------------------------
+agent_timeouts:
+  orchestrator-agent:
+    default_seconds: 120
+    max_seconds: 300
+  migration-agent:
+    default_seconds: 3600
+    max_seconds: 21600
+  validation-agent:
+    default_seconds: 300
+    max_seconds: 1800
+  security-agent:
+    default_seconds: 180
+    max_seconds: 600
+  debugging-agent:
+    default_seconds: 300
+    max_seconds: 1200
+  documentation-agent:
+    default_seconds: 60
+    max_seconds: 180

@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/schemas/orchestrator-agent/v1.4.0",
+  "title": "OrchestratorAgent",
+  "description": "Input and output schemas for the Migration Platform Orchestrator Agent (API v1.4.0)",
+  "version": "1.4.0",
+
+  "$defs": {
+    "RiskLevel": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+      "description": "Risk classification for the migration run"
+    },
+    "GateDecision": {
+      "type": "string",
+      "enum": ["ALLOW", "WARN", "BLOCK"],
+      "description": "Orchestrator gate evaluation outcome"
+    },
+    "MigrationPhase": {
+      "type": "string",
+      "enum": [
+        "INITIALISED",
+        "PLANNING",
+        "VALIDATING",
+        "SECURITY_CHECK",
+        "AWAITING_HUMAN_APPROVAL",
+        "EXECUTING",
+        "DEBUGGING",
+        "COMPLETED",
+        "BLOCKED",
+        "FAILED"
+      ]
+    },
+    "AgentHandoff": {
+      "type": "object",
+      "required": ["handoff_id", "from_agent", "to_agent", "task_description", "context_snapshot"],
+      "properties": {
+        "handoff_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this handoff"
+        },
+        "from_agent": {
+          "type": "string",
+          "const": "orchestrator-agent"
+        },
+        "to_agent": {
+          "type": "string",
+          "enum": [
+            "planning-agent",
+            "validation-agent",
+            "security-agent",
+            "execution-agent",
+            "debugging-agent"
+          ]
+        },
+        "task_description": {
+          "type": "string",
+          "minLength": 10
+        },
+        "context_snapshot": {
+          "type": "object",
+          "description": "State snapshot at the time of handoff"
+        },
+        "gate_requirements": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Gates that must pass before this agent can complete"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600,
+          "default": 300
+        },
+        "requires_human_approval": {
+          "type": "boolean",
+          "default": false
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "GateEvaluation": {
+      "type": "object",
+      "required": ["gate", "decision", "rationale"],
+      "properties": {
+        "gate": { "type": "string" },
+        "decision": { "$ref": "#/$defs/GateDecision" },
+        "rationale": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Mandatory explanation for the gate decision"
+        },
+        "blocking_downstream": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "OrchestratorAgent Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "OrchestratorInput",
+      "description": "Request to the Orchestrator Agent",
+      "required": ["task", "migration_id", "tenant_id"],
+      "additionalProperties": false,
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 2000,
+          "description": "High-level natural language description of the migration goal",
+          "examples": [
+            "Migrate Oracle EBS Accounts and Contacts to Salesforce Sales Cloud",
+            "Run full pre-migration validation for tenant acme-corp"
+          ]
+        },
+        "migration_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9\\-]{2,63}$",
+          "description": "Unique migration run identifier",
+          "examples": ["mig-acme-2026-001", "mig-ebs-contacts-q1"]
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64,
+          "description": "Multi-tenant identifier — enforces data isolation",
+          "examples": ["tenant-acme", "tenant-globex"]
+        },
+        "risk_level": {
+          "$ref": "#/$defs/RiskLevel",
+          "default": "MEDIUM"
+        },
+        "operator_id": {
+          "type": "string",
+          "format": "email",
+          "description": "Required when risk_level is HIGH or CRITICAL",
+          "examples": ["ops-lead@example.com"]
+        },
+        "run_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Existing migration run ID when resuming a previous run"
+        },
+        "object_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "examples": ["Account", "Contact", "Opportunity", "Lead"]
+          },
+          "minItems": 1,
+          "description": "Salesforce object types included in this migration"
+        },
+        "source_system": {
+          "type": "string",
+          "enum": ["oracle_ebs", "sql_server", "mysql", "postgres", "other"],
+          "description": "Legacy source system type"
+        },
+        "target_system": {
+          "type": "string",
+          "enum": ["salesforce", "salesforce_sandbox", "other"],
+          "default": "salesforce"
+        },
+        "api_version": {
+          "type": "string",
+          "const": "v1.4.0",
+          "default": "v1.4.0"
+        }
+      }
+    },
+
+    "output": {
+      "type": "object",
+      "title": "OrchestratorResult",
+      "description": "Complete orchestration outcome",
+      "required": [
+        "orchestration_id",
+        "migration_id",
+        "tenant_id",
+        "final_status",
+        "final_decision",
+        "summary",
+        "phases_completed",
+        "gates_passed",
+        "gates_failed",
+        "agents_invoked",
+        "total_duration_seconds",
+        "timestamp_utc"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "orchestration_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "migration_id": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "final_status": {
+          "$ref": "#/$defs/MigrationPhase"
+        },
+        "final_decision": {
+          "$ref": "#/$defs/GateDecision"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Human-readable outcome summary from the orchestrator"
+        },
+        "phases_completed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Ordered list of pipeline phases that ran to completion"
+        },
+        "gates_passed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of gates that returned ALLOW"
+        },
+        "gates_failed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Names of gates that returned BLOCK"
+        },
+        "blocking_reason": {
+          "type": ["string", "null"],
+          "description": "Populated when final_decision is BLOCK"
+        },
+        "agents_invoked": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Deduplicated ordered list of specialist agents called"
+        },
+        "plan_id": {
+          "type": ["string", "null"],
+          "description": "MigrationPlan ID from planning-agent"
+        },
+        "total_duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "halcon_session_id": {
+          "type": ["string", "null"],
+          "format": "uuid",
+          "description": "Session ID written to .halcon/retrospectives/sessions.jsonl"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Exception message on unexpected failure; null on clean exit"
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "input": {
+        "task": "Migrate Oracle EBS Accounts to Salesforce Sales Cloud",
+        "migration_id": "mig-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "risk_level": "HIGH",
+        "operator_id": "ops-lead@acme.com",
+        "object_types": ["Account", "Contact"],
+        "source_system": "oracle_ebs",
+        "target_system": "salesforce",
+        "api_version": "v1.4.0"
+      },
+      "output": {
+        "orchestration_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab",
+        "migration_id": "mig-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "final_status": "COMPLETED",
+        "final_decision": "ALLOW",
+        "summary": "Migration pipeline completed successfully. All gates passed. 10,000 records migrated with 98% success rate.",
+        "phases_completed": ["PLANNING", "PARALLEL_VALIDATION_SECURITY", "HUMAN_APPROVAL", "EXECUTING"],
+        "gates_passed": ["PLANNING_GATE", "VALIDATION_GATE", "SECURITY_GATE", "HUMAN_APPROVAL_GATE", "EXECUTION_GATE"],
+        "gates_failed": [],
+        "blocking_reason": null,
+        "agents_invoked": ["planning-agent", "validation-agent", "security-agent", "execution-agent"],
+        "plan_id": "plan-acme-001",
+        "total_duration_seconds": 142.5,
+        "halcon_session_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab",
+        "error": null,
+        "timestamp_utc": "2026-03-16T12:00:00Z"
+      }
+    },
+    {
+      "input": {
+        "task": "Validate pre-migration data for tenant globex",
+        "migration_id": "mig-globex-validation-001",
+        "tenant_id": "tenant-globex",
+        "risk_level": "LOW",
+        "object_types": ["Account"],
+        "source_system": "sql_server",
+        "target_system": "salesforce"
+      },
+      "output": {
+        "orchestration_id": "c1d2e3f4-0000-1111-2222-333344445555",
+        "migration_id": "mig-globex-validation-001",
+        "tenant_id": "tenant-globex",
+        "final_status": "BLOCKED",
+        "final_decision": "BLOCK",
+        "summary": "Pipeline blocked at VALIDATION_GATE. Data quality grade F — 45% of Account records missing required Email field.",
+        "phases_completed": ["PLANNING", "PARALLEL_VALIDATION_SECURITY"],
+        "gates_passed": ["PLANNING_GATE", "SECURITY_GATE"],
+        "gates_failed": ["VALIDATION_GATE"],
+        "blocking_reason": "VALIDATION_GATE: Validation grade F — minimum acceptable is C",
+        "agents_invoked": ["planning-agent", "validation-agent", "security-agent"],
+        "plan_id": "plan-globex-001",
+        "total_duration_seconds": 38.2,
+        "halcon_session_id": "c1d2e3f4-0000-1111-2222-333344445555",
+        "error": null,
+        "timestamp_utc": "2026-03-16T13:00:00Z"
+      }
+    }
+  ]
+}

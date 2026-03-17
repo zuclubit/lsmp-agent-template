@@ -1,0 +1,220 @@
+# Bandit SAST Configuration
+# Legacy to Salesforce Migration Platform
+# Version: 1.0.0
+# Reference: https://bandit.readthedocs.io/en/latest/config.html
+
+# ============================================================
+# TEST PROFILES
+# ============================================================
+
+# Profile: default — full scan for CI/CD
+# Profile: strict  — zero tolerance, all severities fail
+# Profile: audit   — generate report only, no failure
+
+profiles:
+  default:
+    include:
+      - B101  # assert_used
+      - B102  # exec_used
+      - B103  # setting_noqa
+      - B104  # hardcoded_bind_all_interfaces
+      - B105  # hardcoded_password_string
+      - B106  # hardcoded_password_funcarg
+      - B107  # hardcoded_password_default
+      - B108  # probable_insecure_hardcoded_password
+      - B110  # try_except_pass
+      - B112  # try_except_continue
+      - B201  # flask_debug_true
+      - B202  # tarfile_unsafe_members
+      - B301  # pickle
+      - B302  # marshal
+      - B303  # md5
+      - B304  # ciphers
+      - B305  # cipher_modes
+      - B306  # mktemp_q
+      - B307  # eval
+      - B308  # mark_safe
+      - B310  # urllib_urlopen
+      - B311  # random
+      - B312  # telnetlib
+      - B313  # xml_bad_cElementTree
+      - B314  # xml_bad_ElementTree
+      - B315  # xml_bad_expatbuilder
+      - B316  # xml_bad_expatreader
+      - B317  # xml_bad_sax
+      - B318  # xml_bad_minidom
+      - B319  # xml_bad_pulldom
+      - B320  # xml_bad_etree
+      - B321  # ftp_lib
+      - B322  # input (Python 2)
+      - B323  # unverified_context
+      - B324  # hashlib
+      - B325  # tempnam
+      - B401  # import_telnetlib
+      - B402  # import_ftplib
+      - B403  # import_pickle
+      - B404  # import_subprocess
+      - B405  # import_xml_etree
+      - B406  # import_xml_sax
+      - B407  # import_xml_expat
+      - B408  # import_xml_minidom
+      - B409  # import_xml_pulldom
+      - B410  # import_lxml
+      - B411  # import_xmlrpclib
+      - B412  # import_httpoxy
+      - B413  # import_pycrypto
+      - B501  # request_with_no_cert_validation
+      - B502  # ssl_with_bad_version
+      - B503  # ssl_with_bad_defaults
+      - B504  # ssl_with_no_version
+      - B505  # weak_cryptographic_key
+      - B506  # yaml_load
+      - B507  # ssh_no_host_key_verification
+      - B508  # snmp_insecure_version
+      - B509  # snmp_weak_cryptography
+      - B601  # paramiko_calls
+      - B602  # subprocess_popen_with_shell_equals_true
+      - B603  # subprocess_without_shell_equals_true
+      - B604  # any_other_function_with_shell_equals_true
+      - B605  # start_process_with_a_shell
+      - B606  # start_process_with_no_shell
+      - B607  # start_process_with_partial_path
+      - B608  # hardcoded_sql_expressions
+      - B609  # linux_commands_wildcard_injection
+      - B610  # django_extra
+      - B611  # django_rawsql
+      - B612  # logging_config_insecure_listen
+      - B701  # jinja2_autoescape_false
+      - B702  # use_of_mako_templates
+      - B703  # django_mark_safe
+
+  strict:
+    include: all
+
+  audit:
+    include: all
+    # Report only, no exit-code failure
+    output: report_only
+
+# ============================================================
+# SEVERITY AND CONFIDENCE THRESHOLDS
+# ============================================================
+
+# Minimum severity to report: LOW, MEDIUM, HIGH
+# In CI/CD: fail on MEDIUM and above
+severity_threshold: MEDIUM
+
+# Minimum confidence to report: LOW, MEDIUM, HIGH
+confidence_threshold: MEDIUM
+
+# Exit code for CI/CD:
+# 0 = no issues found
+# 1 = issues found at or above threshold
+fail_on_issue: true
+
+# ============================================================
+# SKIPS AND EXCLUSIONS
+# ============================================================
+
+# Files/directories to exclude from scanning
+exclude_dirs:
+  - .git
+  - .venv
+  - venv
+  - env
+  - node_modules
+  - __pycache__
+  - .pytest_cache
+  - .mypy_cache
+  - dist
+  - build
+  - htmlcov
+  - "*.egg-info"
+  - migrations/alembic/versions  # Database migration scripts (reviewed separately)
+
+# Files matching these patterns are excluded
+exclude_files:
+  - "conftest.py"   # Test fixtures are allowed more latitude
+  - "*_test.py"
+  - "test_*.py"
+
+# Specific findings that have been reviewed and accepted
+# Format: filename:line_number:test_id OR filename::test_id (all in file)
+# IMPORTANT: Each skipped finding must have a justification comment in code: # nosec B### -- reason
+skips:
+  # subprocess calls in migration orchestrator are controlled and not user-influenced
+  # - src/orchestration/runner.py::B603
+  # Random is used for non-security purposes (batch ID generation)
+  # - src/utils/batch_utils.py::B311
+
+# ============================================================
+# TEST-SPECIFIC CONFIGURATIONS
+# ============================================================
+
+# B105: Hardcoded password — extend patterns
+hardcoded_password_string:
+  word_list:
+    - password
+    - passwd
+    - pass
+    - pwd
+    - secret
+    - token
+    - key
+    - auth
+    - api_key
+    - apikey
+    - credential
+    - private
+
+# B311: Random — flag all uses in security-sensitive modules
+random:
+  check_typed_list: true
+
+# B506: YAML load — require use of yaml.safe_load
+yaml_load:
+  require_safe_load: true
+
+# B324: Hashlib — disallow weak algorithms
+hashlib:
+  weak_algorithms:
+    - md5
+    - sha1
+    - sha
+
+# ============================================================
+# OUTPUT CONFIGURATION
+# ============================================================
+
+output_format: json  # Options: text, json, csv, xml, html
+
+# Output file (relative to project root)
+output_file: reports/bandit-report.json
+
+# Verbosity: 0=quiet, 1=normal, 2=verbose
+verbose: 1
+
+# Include timing information
+include_timing: true
+
+# ============================================================
+# CI/CD INTEGRATION NOTES
+# ============================================================
+# Bandit is run as part of the pre-commit hook and CI pipeline:
+#
+# Pre-commit (fast, changed files only):
+#   bandit -r . -c security/scanning/bandit_config.yaml --severity-level medium
+#
+# Full CI scan (all files):
+#   bandit -r src/ -c security/scanning/bandit_config.yaml \
+#     --format json -o reports/bandit-report.json \
+#     --severity-level medium --confidence-level medium
+#
+# Security gate:
+#   - Fails build on any MEDIUM or HIGH severity findings
+#   - Results uploaded to security dashboard
+#   - SARIF output for GitHub Security tab integration
+#
+# SARIF output (for GitHub Code Scanning):
+#   bandit -r src/ -c security/scanning/bandit_config.yaml --format sarif \
+#     -o reports/bandit.sarif

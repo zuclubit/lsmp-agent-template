@@ -1,0 +1,289 @@
+# Halcon Agent Routing Configuration
+# Version: 2.0.0
+#
+# Defines deterministic routing rules for task dispatch.
+# No circular dependencies allowed — validated at startup.
+#
+# Routing evaluation order: rules are evaluated top-to-bottom.
+# First matching rule wins. If no rule matches, task is rejected.
+
+halcon:
+  routing_version: "2.0.0"
+  validation: strict
+  circular_dependency_check: enabled
+
+# ---------------------------------------------------------------------------
+# Routing Rules
+# ---------------------------------------------------------------------------
+routing_rules:
+
+  - id: route_migration_execution
+    description: "Route data migration execution tasks to migration-agent"
+    priority: 10
+    conditions:
+      task_type: [MIGRATE_CHUNK, EXECUTE_MIGRATION, RETRY_CHUNK, REPROCESS_DLQ]
+    target_agent: migration-agent
+    requires_gate_clearance: [security_clearance_gate, gate2_target_validity]
+    on_match: dispatch
+
+  - id: route_validation_tasks
+    description: "Route all validation checks to validation-agent"
+    priority: 20
+    conditions:
+      task_type: [VALIDATE_SOURCE, VALIDATE_TARGET, VALIDATE_SAMPLE, RUN_GATE]
+    target_agent: validation-agent
+    requires_gate_clearance: []
+    on_match: dispatch
+
+  - id: route_security_audit
+    description: "Route security scan and audit tasks to security-agent"
+    priority: 15
+    conditions:
+      task_type: [SECRETS_SCAN, DEPENDENCY_AUDIT, API_SECURITY_CHECK, SOQL_AUDIT]
+    target_agent: security-agent
+    requires_gate_clearance: []
+    on_match: dispatch
+
+  - id: route_orchestration
+    description: "Route planning, coordination, and gate enforcement to orchestrator"
+    priority: 5
+    conditions:
+      task_type: [BUILD_PLAN, ENFORCE_GATE, DELEGATE, COORDINATE, ROLLBACK]
+    target_agent: orchestrator-agent
+    requires_gate_clearance: []
+    on_match: dispatch
+
+  - id: route_debugging
+    description: "Route triage and RCA tasks to debugging-agent"
+    priority: 25
+    conditions:
+      task_type: [TRIAGE, ROOT_CAUSE_ANALYSIS, DIAGNOSE_FAILURE, INSPECT_DLQ]
+    target_agent: debugging-agent
+    requires_gate_clearance: []
+    on_match: dispatch
+
+  - id: route_documentation_lookup
+    description: "Route documentation and knowledge lookups to documentation-agent"
+    priority: 30
+    conditions:
+      task_type: [LOOKUP_DOCS, SEARCH_RUNBOOK, EXPLAIN_PROCEDURE]
+    target_agent: documentation-agent
+    requires_gate_clearance: []
+    on_match: dispatch
+
+  - id: route_high_risk_to_human
+    description: "Escalate high-risk operations to human operator"
+    priority: 1
+    conditions:
+      task_type: [ROLLBACK, HIGH_RISK_EXECUTION, FORCE_DELETE, OVERRIDE_GATE]
+    target_agent: HUMAN_OPERATOR
+    requires_gate_clearance: []
+    on_match: escalate_and_pause
+
+  - id: fallback_reject
+    description: "Reject unmatched tasks — no implicit routing"
+    priority: 9999
+    conditions:
+      task_type: ["*"]
+    target_agent: null
+    on_match: reject
+    rejection_message: "No routing rule matched task_type. Task rejected."
+
+# ---------------------------------------------------------------------------
+# Dependency Graph (one-way, no cycles)
+# ---------------------------------------------------------------------------
+dependency_graph:
+  description: >
+    Explicit one-way dependencies. Agent B depends on A means
+    B cannot start until A has produced its required outputs.
+    Validated at startup — any cycle causes immediate startup failure.
+
+  edges:
+    - from: validation-agent (gate1_source_completeness)
+      to: orchestrator-agent (planning)
+      output_required: validation_report
+
+    - from: orchestrator-agent (planning)
+      to: security-agent (security_audit)
+      output_required: execution_plan
+
+    - from: security-agent (security_audit)
+      to: migration-agent (execution)
+      output_required: security_audit_report
+
+    - from: migration-agent (execution)
+      to: validation-agent (gate3_post_load_sample)
+      output_required: migration_result
+
+    - from: validation-agent (gate1_source_completeness)
+      to: validation-agent (gate2_target_validity)
+      output_required: gate1_result
+      note: "Same agent, sequential execution enforced by stage ordering"
+
+    - from: debugging-agent (triage)
+      to: debugging-agent (root_cause_analysis)
+      output_required: triage_report
+      note: "Same agent, sequential"
+
+    - from: debugging-agent (root_cause_analysis)
+      to: orchestrator-agent (remediation_plan)
+      output_required: rca_report
+
+# ---------------------------------------------------------------------------
+# Blocking Gates
+# ---------------------------------------------------------------------------
+blocking_gates:
+
+  gate1_source_completeness:
+    description: "Source data must be complete before planning"
+    blocks_routes: [route_orchestration, route_migration_execution]
+    evaluated_by: validation-agent
+    required_fields:
+      - validation_report.gate1_passed
+      - source_record_count
+    pass_condition: "validation_report.gate1_passed == true AND source_record_count > 0"
+    on_fail: BLOCK
+
+  gate2_target_validity:
+    description: "Target Salesforce org must be ready before security audit"
+    blocks_routes: [route_security_audit, route_migration_execution]
+    evaluated_by: validation-agent
+    required_fields:
+      - gate2_result.passed
+      - target_capacity_report.capacity_sufficient
+    pass_condition: "gate2_result.passed == true"
+    on_fail: BLOCK
+
+  security_clearance_gate:
+    description: "Security audit must pass before migration execution"
+    blocks_routes: [route_migration_execution]
+    evaluated_by: security-agent
+    required_fields:
+      - security_audit_report.critical_findings
+      - security_audit_report.approved_for_execution
+    pass_condition: >
+      security_audit_report.critical_findings == 0
+      AND security_audit_report.approved_for_execution == true
+    on_fail: BLOCK
+
+  gate3_post_load_sample:
+    description: "Post-migration sample must pass before marking migration complete"
+    blocks_routes: []
+    evaluated_by: validation-agent
+    required_fields:
+      - post_migration_report.gate3_passed
+      - reconciliation_report.discrepancy_rate
+    pass_condition: >
+      post_migration_report.gate3_passed == true
+      AND reconciliation_report.discrepancy_rate <= 0.001
+    on_fail: ESCALATE_TO_HUMAN
+
+  plan_approval_gate:
+    description: "High-risk plans require human approval before security audit"
+    blocks_routes: [route_security_audit]
+    evaluated_by: orchestrator-agent
+    required_fields:
+      - execution_plan.risk_level
+    pass_condition: >
+      execution_plan.risk_level IN ['LOW', 'MEDIUM']
+      OR (execution_plan.risk_level == 'HIGH' AND human_approval == true)
+    on_fail: ESCALATE_TO_HUMAN
+
+# ---------------------------------------------------------------------------
+# Priority Order (execution priority, lower = higher priority)
+# ---------------------------------------------------------------------------
+priority_order:
+  - agent: orchestrator-agent
+    priority: 1
+    reason: "Coordinates all other agents; must not be starved"
+
+  - agent: security-agent
+    priority: 2
+    reason: "Security gates block execution; fast turnaround required"
+
+  - agent: validation-agent
+    priority: 3
+    reason: "Gates depend on validation results"
+
+  - agent: migration-agent
+    priority: 4
+    reason: "Data movement — high resource consumer"
+
+  - agent: debugging-agent
+    priority: 5
+    reason: "Diagnostic, runs after failures"
+
+  - agent: documentation-agent
+    priority: 6
+    reason: "Non-blocking reference lookups"
+
+# ---------------------------------------------------------------------------
+# Parallel Execution Rules
+# ---------------------------------------------------------------------------
+parallel_allowed:
+  description: >
+    Defines which agents may run concurrently.
+    Pairs listed here are explicitly safe to parallelize.
+
+  safe_pairs:
+    - [validation-agent, documentation-agent]
+    - [security-agent, documentation-agent]
+    - [debugging-agent, documentation-agent]
+
+  never_parallel:
+    - [migration-agent, validation-agent]
+      reason: "Validation reads from same DB migration-agent writes to"
+    - [migration-agent, migration-agent]
+      reason: "No concurrent migration runs on same tenant"
+    - [security-agent, migration-agent]
+      reason: "Security audit must complete before execution"
+
+  max_concurrent_agents: 3
+  max_concurrent_migration_agents: 1
+
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop Requirements
+# ---------------------------------------------------------------------------
+human_in_the_loop:
+  description: >
+    Operations that require explicit operator confirmation before proceeding.
+    Workflow pauses at AWAITING_HUMAN state until confirmation received.
+
+  required_for:
+    - operation: ROLLBACK
+      reason: "Irreversible — manual confirmation required"
+      confirmation_timeout_minutes: 30
+      on_timeout: ESCALATE_AND_BLOCK
+      notify: [pagerduty, slack_oncall]
+
+    - operation: HIGH_RISK_EXECUTION
+      reason: "Migration plan risk_level == HIGH"
+      confirmation_timeout_minutes: 60
+      on_timeout: CANCEL
+      notify: [pagerduty, slack_oncall, email_team_lead]
+
+    - operation: OVERRIDE_GATE
+      reason: "Bypassing a blocking gate requires audit trail"
+      confirmation_timeout_minutes: 15
+      on_timeout: BLOCK
+      notify: [pagerduty, slack_oncall]
+      audit_required: true
+
+    - operation: FORCE_DELETE
+      reason: "Destructive operation — data loss risk"
+      confirmation_timeout_minutes: 15
+      on_timeout: BLOCK
+      notify: [pagerduty, slack_oncall, email_security_team]
+      audit_required: true
+
+  notification_channels:
+    pagerduty:
+      integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+      severity: critical
+    slack_oncall:
+      webhook_url: "${SLACK_ONCALL_WEBHOOK}"
+      channel: "#migration-oncall"
+    email_team_lead:
+      recipients: ["${TEAM_LEAD_EMAIL}"]
+    email_security_team:
+      recipients: ["${SECURITY_TEAM_EMAIL}"]

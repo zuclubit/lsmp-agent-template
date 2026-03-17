@@ -1,0 +1,207 @@
+{
+  "version": "1.0.0",
+  "description": "Reference data for lookups, picklist validation, and transformation during migration.",
+  "last_updated": "2026-03-16",
+  "industry_mappings": {
+    "legacy_to_salesforce": {
+      "TECH": "Technology",
+      "FIN": "Finance",
+      "HLTH": "Healthcare",
+      "MFG": "Manufacturing",
+      "RET": "Retail",
+      "GOVT": "Government",
+      "EDU": "Education",
+      "MEDIA": "Media",
+      "BANK": "Banking",
+      "INS": "Insurance",
+      "TRANS": "Transportation",
+      "UTIL": "Utilities",
+      "AGRI": "Agriculture",
+      "CONST": "Construction",
+      "HOSP": "Hospitality"
+    },
+    "salesforce_picklist_values": [
+      "Agriculture", "Apparel", "Banking", "Biotechnology", "Chemicals",
+      "Communications", "Construction", "Consulting", "Education", "Electronics",
+      "Energy", "Engineering", "Entertainment", "Environmental", "Finance",
+      "Food & Beverage", "Government", "Healthcare", "Hospitality", "Insurance",
+      "Machinery", "Manufacturing", "Media", "Not For Profit", "Recreation",
+      "Retail", "Shipping", "Technology", "Telecommunications", "Transportation",
+      "Utilities", "Other"
+    ]
+  },
+  "account_type_mappings": {
+    "legacy_to_salesforce": {
+      "CUST": "Customer",
+      "PROS": "Prospect",
+      "PART": "Partner",
+      "COMP": "Competitor",
+      "OTHER": "Other"
+    },
+    "salesforce_picklist_values": [
+      "Analyst", "Competitor", "Customer", "Integrator", "Investor",
+      "Partner", "Press", "Prospect", "Reseller", "Other"
+    ]
+  },
+  "account_status_mappings": {
+    "legacy_to_action": {
+      "A": "migrate",
+      "I": "migrate_with_note",
+      "S": "skip",
+      "P": "migrate"
+    },
+    "notes": {
+      "A": "Active accounts are fully migrated.",
+      "I": "Inactive accounts are migrated; set a custom Inactive__c = true flag.",
+      "S": "Suspended accounts are SKIPPED and logged.",
+      "P": "Pending review accounts are migrated normally."
+    }
+  },
+  "lead_source_mappings": {
+    "legacy_to_salesforce": {
+      "Web": "Web",
+      "Phone": "Phone Inquiry",
+      "Email": "Other",
+      "Referral": "Partner Referral",
+      "Advertising": "Purchased List",
+      "Partner": "Partner Referral",
+      "Trade Show": "Other",
+      "Word of Mouth": "Other"
+    },
+    "salesforce_picklist_values": [
+      "Cold Call", "Email", "Employee Referral", "External Referral",
+      "Other", "Partner", "Phone Inquiry", "Public Relations",
+      "Partner Referral", "Purchased List", "Trade Show", "Web", "Word of mouth"
+    ]
+  },
+  "salutation_mappings": {
+    "allowed_values": ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."],
+    "normalisation": {
+      "Mr": "Mr.",
+      "Ms": "Ms.",
+      "Mrs": "Mrs.",
+      "DR": "Dr.",
+      "dr.": "Dr.",
+      "PROF": "Prof."
+    }
+  },
+  "country_iso2_to_name": {
+    "US": "United States",
+    "CA": "Canada",
+    "GB": "United Kingdom",
+    "AU": "Australia",
+    "DE": "Germany",
+    "FR": "France",
+    "JP": "Japan",
+    "CN": "China",
+    "IN": "India",
+    "BR": "Brazil",
+    "MX": "Mexico",
+    "ES": "Spain",
+    "IT": "Italy",
+    "NL": "Netherlands",
+    "SE": "Sweden",
+    "NO": "Norway",
+    "DK": "Denmark",
+    "FI": "Finland",
+    "CH": "Switzerland",
+    "AT": "Austria",
+    "BE": "Belgium",
+    "PL": "Poland",
+    "NZ": "New Zealand",
+    "SG": "Singapore",
+    "HK": "Hong Kong",
+    "ZA": "South Africa",
+    "AE": "United Arab Emirates",
+    "IE": "Ireland"
+  },
+  "us_state_codes": {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia"
+  },
+  "skip_conditions": {
+    "accounts": [
+      {
+        "field": "acct_status",
+        "value": "S",
+        "action": "skip",
+        "reason": "Suspended accounts should not be migrated to Salesforce"
+      },
+      {
+        "field": "acct_name",
+        "value": null,
+        "action": "error",
+        "reason": "Account name is required"
+      },
+      {
+        "field": "acct_name",
+        "value": "",
+        "action": "error",
+        "reason": "Account name cannot be blank"
+      }
+    ],
+    "contacts": [
+      {
+        "field": "last_name",
+        "value": null,
+        "action": "error",
+        "reason": "Contact last_name is required by Salesforce"
+      },
+      {
+        "field": "contact_status",
+        "value": "I",
+        "action": "migrate_with_opt_out",
+        "reason": "Inactive contacts migrate with HasOptedOutOfEmail = true"
+      }
+    ]
+  },
+  "sf_object_limits": {
+    "Account": {
+      "Name": { "type": "string", "max_length": 255 },
+      "Description": { "type": "textarea", "max_length": 32000 },
+      "BillingStreet": { "type": "textarea", "max_length": 255 },
+      "BillingCity": { "type": "string", "max_length": 40 },
+      "BillingState": { "type": "string", "max_length": 80 },
+      "BillingPostalCode": { "type": "string", "max_length": 20 },
+      "BillingCountry": { "type": "string", "max_length": 80 },
+      "Phone": { "type": "phone", "max_length": 40 },
+      "Fax": { "type": "phone", "max_length": 40 },
+      "Website": { "type": "url", "max_length": 255 },
+      "Legacy_ID__c": { "type": "string", "max_length": 50, "is_external_id": true }
+    },
+    "Contact": {
+      "FirstName": { "type": "string", "max_length": 80 },
+      "LastName": { "type": "string", "max_length": 80 },
+      "Title": { "type": "string", "max_length": 128 },
+      "Department": { "type": "string", "max_length": 80 },
+      "Email": { "type": "email", "max_length": 80 },
+      "Phone": { "type": "phone", "max_length": 40 },
+      "MobilePhone": { "type": "phone", "max_length": 40 },
+      "MailingStreet": { "type": "textarea", "max_length": 255 },
+      "MailingCity": { "type": "string", "max_length": 40 },
+      "MailingState": { "type": "string", "max_length": 80 },
+      "MailingPostalCode": { "type": "string", "max_length": 20 },
+      "MailingCountry": { "type": "string", "max_length": 80 },
+      "Legacy_ID__c": { "type": "string", "max_length": 50, "is_external_id": true }
+    }
+  },
+  "migration_defaults": {
+    "account_source": "Data Migration",
+    "contact_lead_source_fallback": "Other",
+    "account_type_fallback": "Prospect",
+    "industry_fallback": "Other",
+    "country_fallback": "United States",
+    "salutation_fallback": null
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://s-agent.example.com/schemas/salesforce_account_v1.json",
+  "title": "Salesforce Account (REST API Payload)",
+  "description": "JSON Schema for the Salesforce Account object payload sent to the Salesforce REST API. Field names follow Salesforce API naming conventions. Optional fields should be omitted (not nulled) when not available.",
+  "type": "object",
+  "required": ["Name", "Legacy_ID__c"],
+  "additionalProperties": true,
+  "properties": {
+    "Name": {
+      "type": "string",
+      "description": "Account name. Maps to Account.Name.",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "Type": {
+      "type": ["string", "null"],
+      "description": "Account type picklist value.",
+      "enum": ["Prospect", "Customer", "Partner", "Competitor", "Other", null]
+    },
+    "Industry": {
+      "type": ["string", "null"],
+      "description": "Industry picklist value (Salesforce standard).",
+      "enum": [
+        "Agriculture", "Apparel", "Banking", "Biotechnology", "Chemicals",
+        "Communications", "Construction", "Consulting", "Education", "Electronics",
+        "Energy", "Engineering", "Entertainment", "Environmental", "Finance",
+        "Food & Beverage", "Government", "Healthcare", "Hospitality", "Insurance",
+        "Machinery", "Manufacturing", "Media", "Not For Profit", "Recreation",
+        "Retail", "Shipping", "Technology", "Telecommunications", "Transportation",
+        "Utilities", "Other", null
+      ]
+    },
+    "AnnualRevenue": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Annual revenue in the currency of the org (USD by default)."
+    },
+    "NumberOfEmployees": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "Description": {
+      "type": ["string", "null"],
+      "maxLength": 32000
+    },
+    "Phone": {
+      "type": ["string", "null"],
+      "maxLength": 40
+    },
+    "Fax": {
+      "type": ["string", "null"],
+      "maxLength": 40
+    },
+    "Website": {
+      "type": ["string", "null"],
+      "maxLength": 255
+    },
+    "Email__c": {
+      "type": ["string", "null"],
+      "description": "Custom field: primary email address. Must be created in target org.",
+      "format": "email",
+      "maxLength": 254
+    },
+    "BillingStreet": {
+      "type": ["string", "null"],
+      "maxLength": 255
+    },
+    "BillingCity": {
+      "type": ["string", "null"],
+      "maxLength": 40
+    },
+    "BillingState": {
+      "type": ["string", "null"],
+      "maxLength": 80,
+      "description": "State name or abbreviation. Use full name for international addresses."
+    },
+    "BillingPostalCode": {
+      "type": ["string", "null"],
+      "maxLength": 20
+    },
+    "BillingCountry": {
+      "type": ["string", "null"],
+      "maxLength": 80,
+      "description": "Country name or ISO code depending on org's State & Country Picklists setting."
+    },
+    "ShippingStreet": {
+      "type": ["string", "null"],
+      "maxLength": 255
+    },
+    "ShippingCity": {
+      "type": ["string", "null"],
+      "maxLength": 40
+    },
+    "ShippingState": {
+      "type": ["string", "null"],
+      "maxLength": 80
+    },
+    "ShippingPostalCode": {
+      "type": ["string", "null"],
+      "maxLength": 20
+    },
+    "ShippingCountry": {
+      "type": ["string", "null"],
+      "maxLength": 80
+    },
+    "Legacy_ID__c": {
+      "type": "string",
+      "description": "External ID field mapping to legacy acct_id. Used for upsert idempotency. Must be created as an External ID field in the target org.",
+      "minLength": 1,
+      "maxLength": 50,
+      "examples": ["ACCT00001", "C-1234-XY"]
+    },
+    "OwnerId": {
+      "type": ["string", "null"],
+      "description": "Salesforce User ID to assign as record owner. Default: integration user.",
+      "pattern": "^005[a-zA-Z0-9]{15}$"
+    },
+    "AccountSource": {
+      "type": ["string", "null"],
+      "description": "Source of the account record.",
+      "enum": ["Web", "Phone Inquiry", "Partner Referral", "Purchased List",
+               "Other", "Data Migration", null]
+    },
+    "Rating": {
+      "type": ["string", "null"],
+      "enum": ["Hot", "Warm", "Cold", null]
+    }
+  },
+  "examples": [
+    {
+      "Name": "Acme Technologies Inc",
+      "Type": "Customer",
+      "Industry": "Technology",
+      "AnnualRevenue": 4500000.00,
+      "NumberOfEmployees": 320,
+      "Phone": "+16505550101",
+      "Website": "https://acmetech.example.com",
+      "Email__c": "info@acmetech.example.com",
+      "BillingStreet": "1600 Amphitheatre Pkwy",
+      "BillingCity": "Mountain View",
+      "BillingState": "CA",
+      "BillingPostalCode": "94043",
+      "BillingCountry": "US",
+      "Legacy_ID__c": "ACCT00001",
+      "AccountSource": "Data Migration"
+    }
+  ]
+}

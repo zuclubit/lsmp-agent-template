@@ -1,0 +1,414 @@
+# Security Audit Workflow Definition
+# Version: 2.0.0
+# Workflow: security_audit
+#
+# Phases: secrets_scan → dependency_audit → api_security → soql_injection_check
+#
+# Severity levels: CRITICAL | HIGH | MEDIUM | LOW | INFO
+# Auto-blocking: Any CRITICAL finding immediately blocks workflow advancement.
+# HIGH findings accumulate; if count >= 3, workflow is blocked.
+# MEDIUM/LOW findings are reported but do not block.
+
+workflow:
+  name: security_audit
+  version: "2.0.0"
+  description: "Comprehensive security audit for migration platform"
+  timeout_minutes: 60
+  audit_logging: required
+  auto_block_on_critical: true
+
+# ---------------------------------------------------------------------------
+# Severity Routing Policy
+# ---------------------------------------------------------------------------
+severity_routing:
+  CRITICAL:
+    action: BLOCK_IMMEDIATELY
+    notify: [pagerduty, slack_security, email_security_team]
+    write_report: true
+    halt_remaining_phases: true
+    require_remediation_before_retry: true
+
+  HIGH:
+    action: ACCUMULATE
+    block_threshold: 3
+    notify: [slack_security]
+    write_report: true
+    halt_remaining_phases: false
+
+  MEDIUM:
+    action: REPORT_ONLY
+    notify: [slack_migration_channel]
+    write_report: true
+    halt_remaining_phases: false
+
+  LOW:
+    action: LOG_ONLY
+    notify: []
+    write_report: true
+    halt_remaining_phases: false
+
+  INFO:
+    action: LOG_ONLY
+    notify: []
+    write_report: false
+    halt_remaining_phases: false
+
+# ---------------------------------------------------------------------------
+# Phase 1: Secrets Scan
+# ---------------------------------------------------------------------------
+phases:
+
+  - phase: secrets_scan
+    order: 1
+    agent: security-agent
+    description: >
+      Scan all configuration files, agent source code, YAML files, and
+      environment variable references for hard-coded secrets, API keys,
+      passwords, private keys, and connection strings. Uses pattern matching
+      and entropy analysis.
+
+    inputs:
+      required:
+        - name: repository_path
+          type: string
+          description: "Root path of codebase to scan"
+        - name: config_paths
+          type: array
+          description: "Explicit config file paths to include"
+        - name: scan_scope
+          type: array
+          default: ["/agents", "/config", "/halcon", "/tools", "/context-servers"]
+      optional:
+        - name: exclude_paths
+          type: array
+          default: [".git", "__pycache__", ".venv", "node_modules"]
+        - name: allow_vault_refs
+          type: boolean
+          default: true
+          description: "Vault secret refs (secret/...) are permitted, not flagged"
+
+    checks:
+      high_entropy_strings:
+        description: "Detect strings with entropy > 4.5 bits/char in assignment context"
+        method: shannon_entropy
+        threshold: 4.5
+        context_pattern: '(password|secret|key|token|credential)\s*[=:]\s*["\']'
+        severity: CRITICAL
+
+      aws_credentials:
+        description: "Detect AWS access keys and secret keys"
+        patterns:
+          - 'AKIA[0-9A-Z]{16}'
+          - 'aws_secret_access_key\s*=\s*[A-Za-z0-9+/]{40}'
+        severity: CRITICAL
+
+      private_keys:
+        description: "Detect PEM private keys"
+        patterns:
+          - '-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----'
+        severity: CRITICAL
+
+      connection_strings:
+        description: "Detect inline DB connection strings with credentials"
+        patterns:
+          - 'postgresql://[^:]+:[^@]+@'
+          - 'mysql://[^:]+:[^@]+@'
+          - 'mongodb://[^:]+:[^@]+@'
+        severity: CRITICAL
+
+      api_keys_inline:
+        description: "Detect API keys not using Vault references"
+        patterns:
+          - '(?i)(api_key|apikey)\s*[=:]\s*["\'][A-Za-z0-9\-_]{20,}'
+        exclude_if_matches: 'secret/|vault:|\\$\\{.*\\}'
+        severity: HIGH
+
+      salesforce_credentials:
+        description: "Detect inline Salesforce credentials"
+        patterns:
+          - '(?i)(sf_password|sf_token|salesforce_password)\s*[=:]\s*["\']'
+        severity: CRITICAL
+
+    outputs:
+      - name: secrets_scan_report
+        type: object
+        schema:
+          passed: boolean
+          leaked_secrets: integer
+          findings: array
+          scanned_files: integer
+          scan_duration_seconds: float
+
+    gate_after:
+      name: no_leaked_secrets
+      pass_condition: "secrets_scan_report.leaked_secrets == 0"
+      on_pass: advance_to_dependency_audit
+      on_fail:
+        action: BLOCK
+        severity: CRITICAL
+        message: "Hard-coded secrets detected. Execution blocked pending remediation."
+
+# ---------------------------------------------------------------------------
+# Phase 2: Dependency Audit
+# ---------------------------------------------------------------------------
+  - phase: dependency_audit
+    order: 2
+    agent: security-agent
+    description: >
+      Audit Python package dependencies for known CVEs, license compliance,
+      and pinned versions. Uses OSV database for vulnerability lookups.
+      Unpinned versions in production are flagged as HIGH severity.
+
+    inputs:
+      required:
+        - name: requirements_files
+          type: array
+          description: "Paths to requirements.txt / pyproject.toml files"
+        - name: lock_files
+          type: array
+          description: "Paths to poetry.lock / pip freeze outputs"
+      optional:
+        - name: allowed_licenses
+          type: array
+          default: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Python-2.0]
+        - name: ignore_cve_ids
+          type: array
+          default: []
+          description: "CVEs explicitly accepted with documented justification"
+
+    checks:
+      critical_cve_check:
+        description: "CVSS >= 9.0 in any transitive dependency"
+        data_source: osv.dev
+        severity: CRITICAL
+        block_on_match: true
+
+      high_cve_check:
+        description: "CVSS 7.0-8.9 in any direct dependency"
+        data_source: osv.dev
+        severity: HIGH
+
+      unpinned_versions:
+        description: "Production dependencies must use exact pins (==)"
+        fail_on: "any dependency uses ~=, >=, or no version pin"
+        severity: HIGH
+
+      disallowed_licenses:
+        description: "GPL/AGPL licenses must not appear in production deps"
+        disallowed: [GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0]
+        severity: HIGH
+
+      abandoned_packages:
+        description: "Packages not updated in 3+ years on PyPI"
+        threshold_days: 1095
+        severity: MEDIUM
+
+    outputs:
+      - name: dependency_audit_report
+        type: object
+        schema:
+          passed: boolean
+          critical_cves: integer
+          high_cves: integer
+          total_dependencies: integer
+          unpinned_count: integer
+          findings: array
+
+    gate_after:
+      name: no_critical_cves
+      pass_condition: "dependency_audit_report.critical_cves == 0"
+      on_pass: advance_to_api_security
+      on_fail:
+        action: BLOCK
+        severity: CRITICAL
+        message: "Critical CVEs detected in dependencies. Update before proceeding."
+
+# ---------------------------------------------------------------------------
+# Phase 3: API Security
+# ---------------------------------------------------------------------------
+  - phase: api_security
+    order: 3
+    agent: security-agent
+    description: >
+      Audit all HTTP API endpoints used by agents and tools. Verifies that
+      every endpoint enforces authentication, uses TLS, and does not expose
+      sensitive data in URLs or response bodies. Checks SPIRE SVID usage
+      for service-to-service auth.
+
+    inputs:
+      required:
+        - name: api_endpoints
+          type: array
+          description: "List of API endpoints from tools.yaml allowed_hosts"
+        - name: auth_config
+          type: object
+          description: "Authentication configuration per service"
+        - name: tls_config
+          type: object
+      optional:
+        - name: spire_enabled
+          type: boolean
+          default: true
+
+    checks:
+      unauthenticated_endpoints:
+        description: "All endpoints must require auth (SPIRE mTLS, OAuth2, API key via Vault)"
+        severity: CRITICAL
+        fail_on: "any endpoint lacks authentication"
+
+      tls_enforcement:
+        description: "All endpoints must use HTTPS (TLS 1.2+)"
+        severity: CRITICAL
+        fail_on: "any endpoint uses http:// scheme"
+
+      tls_minimum_version:
+        description: "TLS 1.0 and 1.1 must not be accepted"
+        severity: HIGH
+        allowed_versions: ["TLS1.2", "TLS1.3"]
+
+      sensitive_data_in_url:
+        description: "No tokens, passwords, or PII in URL query parameters"
+        patterns:
+          - 'password=[^&]+'
+          - 'token=[^&]+'
+          - 'key=[^&]+'
+        severity: HIGH
+
+      spire_svid_validation:
+        description: "Service-to-service calls must use SPIRE SVIDs when spire_enabled"
+        condition: "spire_enabled == true"
+        fail_on: "any internal service call lacks SVID"
+        severity: HIGH
+
+      response_content_type:
+        description: "API responses must set Content-Type header"
+        fail_on: "any endpoint omits Content-Type on JSON response"
+        severity: MEDIUM
+
+      cors_wildcard:
+        description: "No CORS wildcard on internal APIs"
+        fail_on: "any internal endpoint has Access-Control-Allow-Origin: *"
+        severity: HIGH
+
+    outputs:
+      - name: api_security_report
+        type: object
+        schema:
+          passed: boolean
+          unauthenticated_endpoints: integer
+          tls_violations: integer
+          total_endpoints_checked: integer
+          findings: array
+
+    gate_after:
+      name: api_auth_enforced
+      pass_condition: "api_security_report.unauthenticated_endpoints == 0 AND api_security_report.tls_violations == 0"
+      on_pass: advance_to_soql_injection_check
+      on_fail:
+        action: BLOCK
+        severity: CRITICAL
+        message: "Unauthenticated or non-TLS API endpoints detected."
+
+# ---------------------------------------------------------------------------
+# Phase 4: SOQL Injection Check
+# ---------------------------------------------------------------------------
+  - phase: soql_injection_check
+    order: 4
+    agent: security-agent
+    description: >
+      Audit all SOQL queries in agent code and tool implementations for
+      injection vulnerabilities. Enforces SELECT-only queries, validates
+      parameterization, and checks for dynamic string concatenation patterns.
+
+    inputs:
+      required:
+        - name: soql_query_files
+          type: array
+          description: "Python files containing SOQL queries"
+        - name: agent_code_paths
+          type: array
+          description: "Agent source directories to scan"
+      optional:
+        - name: soql_whitelist_patterns
+          type: array
+          default: []
+          description: "Pre-approved dynamic patterns that are safe"
+
+    checks:
+      select_only_enforcement:
+        description: "All SOQL must be SELECT statements only"
+        fail_on: >
+          any SOQL matches
+          '^\\s*(INSERT|UPDATE|DELETE|UPSERT|MERGE)\\s+' case-insensitive
+        severity: CRITICAL
+
+      string_concatenation_in_soql:
+        description: "Dynamic string concatenation in SOQL is forbidden"
+        patterns:
+          - 'soql.*?\\+.*?['"]'
+          - 'f"SELECT.*?\\{[^}]+\\}'
+          - '% .*(SELECT|WHERE|FROM)'
+        exclude_if_matches: "soql_whitelist_patterns"
+        severity: CRITICAL
+
+      parameterized_query_check:
+        description: "User-supplied values must use bind variables (:param)"
+        fail_on: "direct string interpolation of external input in SOQL"
+        severity: CRITICAL
+
+      soql_length_validation:
+        description: "SOQL queries must not exceed 20,000 characters (SF limit)"
+        fail_on: "any static SOQL query > 20000 chars"
+        severity: HIGH
+
+      wildcard_select_check:
+        description: "SELECT * is not allowed — explicit fields required"
+        patterns:
+          - 'SELECT\\s+\\*\\s+FROM'
+        severity: MEDIUM
+
+      governor_limit_awareness:
+        description: "Queries in loops violate Salesforce governor limits"
+        patterns:
+          - 'for .* in .*:\\s*\\n\\s*(soql|query|SELECT)'
+        severity: HIGH
+
+    outputs:
+      - name: injection_audit_report
+        type: object
+        schema:
+          passed: boolean
+          injection_risks: integer
+          non_select_queries: integer
+          concatenation_violations: integer
+          total_queries_scanned: integer
+          findings: array
+
+    gate_after:
+      name: no_injection_vectors
+      pass_condition: "injection_audit_report.injection_risks == 0 AND injection_audit_report.non_select_queries == 0"
+      on_pass: COMPLETE_SECURITY_AUDIT
+      on_fail:
+        action: BLOCK
+        severity: CRITICAL
+        message: "SOQL injection risks detected. Audit code before migration execution."
+
+# ---------------------------------------------------------------------------
+# Workflow Summary Output
+# ---------------------------------------------------------------------------
+workflow_summary_output:
+  name: security_audit_summary
+  type: object
+  schema:
+    workflow_id: string
+    migration_id: string
+    approved_for_execution: boolean
+    critical_findings: integer
+    high_findings: integer
+    medium_findings: integer
+    phases_passed: array
+    phases_failed: array
+    all_phases_passed: boolean
+    executed_at: datetime
+    duration_seconds: integer
+    report_paths: array

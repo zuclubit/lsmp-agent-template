@@ -1,0 +1,548 @@
+##############################################################################
+# ci.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Trigger : Push to any branch, Pull Requests to main/develop
+# Purpose : Full CI pipeline — lint, SAST, unit tests, integration tests,
+#           Docker build, and registry push
+##############################################################################
+
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - ".gitignore"
+  pull_request:
+    branches:
+      - main
+      - develop
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  REGISTRY: ${{ secrets.ACR_LOGIN_SERVER }}
+  IMAGE_MIGRATION: sfmigration-worker
+  IMAGE_API: sfmigration-api
+  TRIVY_VERSION: "0.50.1"
+  SEMGREP_VERSION: "1.65.0"
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+
+  ##############################################################################
+  # 1. Code quality — lint and format checks
+  ##############################################################################
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linting dependencies
+        run: |
+          pip install --upgrade pip
+          pip install ruff==0.3.4 black==24.3.0 isort==5.13.2 mypy==1.9.0 \
+                      flake8==7.0.0 pylint==3.1.0 \
+                      types-redis types-requests types-PyYAML
+
+      - name: Ruff lint
+        run: ruff check src/ tests/ --output-format=github
+
+      - name: Black format check
+        run: black --check --diff src/ tests/
+
+      - name: isort import order
+        run: isort --check-only --diff src/ tests/
+
+      - name: mypy type check
+        run: mypy src/ --ignore-missing-imports --strict
+
+      - name: Lint Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive infrastructure/terraform/
+
+      - name: Lint Kubernetes manifests
+        uses: azure/k8s-lint@v2
+        with:
+          manifests: infrastructure/kubernetes/**/*.yaml
+
+      - name: Validate docker-compose
+        run: docker compose -f infrastructure/docker/docker-compose.yml config --quiet
+
+  ##############################################################################
+  # 2. Security scan — SAST, secrets detection, dependency audit
+  ##############################################################################
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # Bandit SAST for Python
+      - name: Install Bandit
+        run: pip install bandit[toml]==1.7.8
+
+      - name: Run Bandit SAST
+        run: |
+          bandit -r src/ \
+            -f sarif \
+            -o bandit-results.sarif \
+            --severity-level medium \
+            --confidence-level medium \
+            -ll
+        continue-on-error: true
+
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit
+
+      # Semgrep SAST
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/secrets
+            p/owasp-top-ten
+            p/jwt
+            p/sql-injection
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+        if: always()
+
+      # GitLeaks — secrets detection
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      # pip-audit — Python dependency CVE scan
+      - name: Install pip-audit
+        run: pip install pip-audit==2.7.2
+
+      - name: Run pip-audit
+        run: |
+          pip install -r requirements.txt -r requirements-api.txt -r requirements-migration.txt
+          pip-audit \
+            --format json \
+            --output pip-audit-results.json \
+            --strict
+        continue-on-error: true
+
+      - name: Upload pip-audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+
+      # Checkov — IaC security scan
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-tf.sarif
+          soft_fail: true
+
+      - name: Run Checkov on Kubernetes
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/kubernetes/
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov-k8s.sarif
+          soft_fail: true
+
+      - name: Upload Checkov Terraform SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-tf.sarif
+          category: checkov-terraform
+        if: always()
+
+  ##############################################################################
+  # 3. Unit tests
+  ##############################################################################
+  unit-tests:
+    name: Unit Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt \
+                      -r requirements-api.txt \
+                      -r requirements-migration.txt \
+                      -r requirements-test.txt
+
+      - name: Run unit tests with coverage
+        run: |
+          python -m pytest tests/unit/ \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:coverage-html \
+            --cov-report=term-missing \
+            --cov-fail-under=80 \
+            --junitxml=test-results.xml \
+            -n auto
+        env:
+          APP_ENV: test
+          LOG_LEVEL: ERROR
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          flags: unit-tests
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results-py${{ matrix.python-version }}
+          path: |
+            test-results.xml
+            coverage.xml
+            coverage-html/
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit Tests (Python ${{ matrix.python-version }})
+          path: test-results.xml
+          reporter: java-junit
+
+  ##############################################################################
+  # 4. Integration tests
+  ##############################################################################
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test results directory
+        run: mkdir -p test-results
+
+      - name: Run integration tests via docker compose
+        run: |
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            up \
+            --build \
+            --abort-on-container-exit \
+            --exit-code-from integration-tests \
+            --timeout 300
+        env:
+          DOCKER_BUILDKIT: "1"
+
+      - name: Collect test results
+        if: always()
+        run: |
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            logs integration-tests > test-results/integration-test-logs.txt
+
+      - name: Cleanup docker compose
+        if: always()
+        run: |
+          docker compose \
+            -f infrastructure/docker/docker-compose.test.yml \
+            down -v --remove-orphans
+
+      - name: Upload integration test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-results
+          path: test-results/
+
+  ##############################################################################
+  # 5. Build Docker images
+  ##############################################################################
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests]
+    outputs:
+      migration-image-digest: ${{ steps.build-migration.outputs.digest }}
+      api-image-digest: ${{ steps.build-api.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_MIGRATION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_API }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.vendor=Company Engineering
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build migration worker image (no push)
+        id: build-migration
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.migration
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_MIGRATION }}:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          platforms: linux/amd64
+
+      - name: Build API image (no push)
+        id: build-api
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.api
+          push: false
+          load: true
+          tags: ${{ env.IMAGE_API }}:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          platforms: linux/amd64
+
+      # Trivy vulnerability scan on built images
+      - name: Scan migration image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_MIGRATION }}:ci-${{ github.sha }}
+          format: sarif
+          output: trivy-migration.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Scan API image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_API }}:ci-${{ github.sha }}
+          format: sarif
+          output: trivy-api.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF (migration)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-migration.sarif
+          category: trivy-migration
+        if: always()
+
+      - name: Upload Trivy SARIF (API)
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-api.sarif
+          category: trivy-api
+        if: always()
+
+  ##############################################################################
+  # 6. Push Docker images (only on main/develop branches, not PRs)
+  ##############################################################################
+  push-registry:
+    name: Push to Registry
+    runs-on: ubuntu-latest
+    needs: [build-docker, integration-tests]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Generate image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_MIGRATION }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_API }}
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push migration image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.migration
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_MIGRATION }}:sha-${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_MIGRATION }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.api
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_API }}:sha-${{ github.sha }},${{ env.REGISTRY }}/${{ env.IMAGE_API }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          provenance: true
+          sbom: true
+
+      - name: Generate SBOM attestation
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_MIGRATION }}:sha-${{ github.sha }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          artifact-name: migration-worker-sbom.spdx.json
+
+  ##############################################################################
+  # 7. Post-CI PR comment with summary
+  ##############################################################################
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint, security-scan, unit-tests, integration-tests, build-docker]
+    if: always() && github.event_name == 'pull_request'
+    steps:
+      - name: Comment PR with CI results
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const results = {
+              lint: '${{ needs.lint.result }}',
+              security: '${{ needs.security-scan.result }}',
+              unit_tests: '${{ needs.unit-tests.result }}',
+              integration_tests: '${{ needs.integration-tests.result }}',
+              build: '${{ needs.build-docker.result }}'
+            };
+            const emoji = (r) => r === 'success' ? '✅' : r === 'skipped' ? '⏭️' : '❌';
+            const body = `## CI Results for ${context.payload.pull_request.head.sha.slice(0, 7)}
+            | Job | Status |
+            |-----|--------|
+            | Lint & Format | ${emoji(results.lint)} ${results.lint} |
+            | Security Scan | ${emoji(results.security)} ${results.security} |
+            | Unit Tests | ${emoji(results.unit_tests)} ${results.unit_tests} |
+            | Integration Tests | ${emoji(results.integration_tests)} ${results.integration_tests} |
+            | Docker Build | ${emoji(results.build)} ${results.build} |
+            `;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

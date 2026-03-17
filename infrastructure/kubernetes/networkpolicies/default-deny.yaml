@@ -1,0 +1,158 @@
+##############################################################################
+# default-deny.yaml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Zero-trust network baseline — deny all ingress AND egress by
+#           default for every namespace. Specific allow policies are defined
+#           in allow-api.yaml and peer policies.
+##############################################################################
+
+---
+# ---- Production: deny all ingress ----------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}        # Applies to every pod in the namespace
+  policyTypes:
+    - Ingress
+
+---
+# ---- Production: deny all egress -----------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+
+---
+# Allow DNS resolution (CoreDNS) for all pods — required for any name lookup
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# ---- Staging: deny all ingress -------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: sfmigration-staging
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# ---- Staging: deny all egress --------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: sfmigration-staging
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sfmigration-staging
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+---
+# ---- Dev: deny all ingress -----------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: sfmigration-dev
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+# ---- Dev: deny all egress ------------------------------------------------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: sfmigration-dev
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: sfmigration-dev
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: baseline
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP

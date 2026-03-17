@@ -1,0 +1,310 @@
+{
+  "_description": "Mock Salesforce API responses for all test scenarios. API version v59.0.",
+  "auth": {
+    "success": {
+      "status_code": 200,
+      "body": {
+        "access_token": "00D000000000001!ARwAQMockAccessToken.ForTestingOnly",
+        "instance_url": "https://myorg.salesforce.com",
+        "id": "https://login.salesforce.com/id/00D000000000001AAA/005000000000001AAA",
+        "token_type": "Bearer",
+        "issued_at": "1710518400000",
+        "signature": "mockSignatureForTestingOnly==",
+        "expires_in": 7200
+      }
+    },
+    "invalid_credentials": {
+      "status_code": 400,
+      "body": {
+        "error": "invalid_client",
+        "error_description": "client identifier invalid"
+      }
+    },
+    "session_expired": {
+      "status_code": 401,
+      "body": [
+        {
+          "message": "Session expired or invalid",
+          "errorCode": "INVALID_SESSION_ID"
+        }
+      ]
+    }
+  },
+  "account": {
+    "create_success": {
+      "status_code": 201,
+      "body": {
+        "id": "001Dn000001MockAA2",
+        "success": true,
+        "errors": []
+      }
+    },
+    "create_duplicate": {
+      "status_code": 400,
+      "body": [
+        {
+          "message": "Duplicate value on record with id: 001Dn000001ExistAA2",
+          "errorCode": "DUPLICATE_VALUE",
+          "fields": ["Legacy_ID__c"]
+        }
+      ]
+    },
+    "create_missing_required": {
+      "status_code": 400,
+      "body": [
+        {
+          "message": "Required fields are missing: [Name]",
+          "errorCode": "REQUIRED_FIELD_MISSING",
+          "fields": ["Name"]
+        }
+      ]
+    },
+    "create_string_too_long": {
+      "status_code": 400,
+      "body": [
+        {
+          "message": "Name: data value too large: (max length: 255)",
+          "errorCode": "STRING_TOO_LONG",
+          "fields": ["Name"]
+        }
+      ]
+    },
+    "update_success": {
+      "status_code": 204,
+      "body": null
+    },
+    "not_found": {
+      "status_code": 404,
+      "body": [
+        {
+          "message": "The requested resource does not exist",
+          "errorCode": "NOT_FOUND"
+        }
+      ]
+    },
+    "query_success": {
+      "status_code": 200,
+      "body": {
+        "totalSize": 2,
+        "done": true,
+        "records": [
+          {
+            "attributes": {"type": "Account", "url": "/services/data/v59.0/sobjects/Account/001Dn000001MockAA2"},
+            "Id": "001Dn000001MockAA2",
+            "Name": "Acme Corporation",
+            "Type": "Customer",
+            "Industry": "Technology",
+            "BillingCity": "San Francisco",
+            "Legacy_ID__c": "LEGACY-ACC-00000001"
+          },
+          {
+            "attributes": {"type": "Account", "url": "/services/data/v59.0/sobjects/Account/001Dn000002MockBB3"},
+            "Id": "001Dn000002MockBB3",
+            "Name": "Global Finance Partners",
+            "Type": "Partner",
+            "Industry": "Finance",
+            "BillingCity": "London",
+            "Legacy_ID__c": "LEGACY-ACC-00000004"
+          }
+        ]
+      }
+    },
+    "query_empty": {
+      "status_code": 200,
+      "body": {
+        "totalSize": 0,
+        "done": true,
+        "records": []
+      }
+    },
+    "query_paginated_page1": {
+      "status_code": 200,
+      "body": {
+        "totalSize": 5000,
+        "done": false,
+        "nextRecordsUrl": "/services/data/v59.0/query/01g000000000001AAA-2000",
+        "records": []
+      }
+    },
+    "query_paginated_page2": {
+      "status_code": 200,
+      "body": {
+        "totalSize": 5000,
+        "done": true,
+        "records": []
+      }
+    }
+  },
+  "bulk_api": {
+    "create_job_success": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "operation": "upsert",
+        "object": "Account",
+        "createdById": "005Dn000001TestUser",
+        "createdDate": "2026-03-16T00:00:00.000Z",
+        "systemModstamp": "2026-03-16T00:00:00.000Z",
+        "state": "Open",
+        "externalIdFieldName": "Legacy_ID__c",
+        "concurrencyMode": "Parallel",
+        "contentType": "CSV",
+        "apiVersion": "59.0",
+        "jobType": "V2Ingest",
+        "lineEnding": "LF",
+        "columnDelimiter": "COMMA"
+      }
+    },
+    "upload_data_success": {
+      "status_code": 201,
+      "body": null
+    },
+    "close_job_success": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "UploadComplete"
+      }
+    },
+    "job_in_progress": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "InProgress",
+        "numberRecordsProcessed": 2500,
+        "numberRecordsFailed": 0
+      }
+    },
+    "job_complete_success": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "JobComplete",
+        "numberRecordsProcessed": 5000,
+        "numberRecordsFailed": 0,
+        "totalProcessingTime": 45000
+      }
+    },
+    "job_complete_with_failures": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "JobComplete",
+        "numberRecordsProcessed": 5000,
+        "numberRecordsFailed": 12,
+        "totalProcessingTime": 46000
+      }
+    },
+    "job_failed": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "Failed",
+        "errorMessage": "Exceeded maximum number of retries"
+      }
+    },
+    "job_aborted": {
+      "status_code": 200,
+      "body": {
+        "id": "7505x000001BulkJobAAA",
+        "state": "Aborted",
+        "numberRecordsProcessed": 1200,
+        "numberRecordsFailed": 0
+      }
+    },
+    "successful_results_csv": "sf__Id,sf__Created,Name,Legacy_ID__c\n001Dn000001MockAA2,true,Acme Corporation,LEGACY-ACC-00000001\n001Dn000002MockBB3,false,Global Finance Partners,LEGACY-ACC-00000004\n",
+    "failed_results_csv": "sf__Id,sf__Error,Name,Legacy_ID__c\n,REQUIRED_FIELD_MISSING:Name:Name,, LEGACY-ACC-00000003\n"
+  },
+  "rate_limiting": {
+    "api_limit_exceeded": {
+      "status_code": 429,
+      "headers": {
+        "Retry-After": "60",
+        "X-RateLimit-Limit": "1000000",
+        "X-RateLimit-Remaining": "0",
+        "X-RateLimit-Reset": "1710518460"
+      },
+      "body": [
+        {
+          "message": "Request limit exceeded for API",
+          "errorCode": "REQUEST_LIMIT_EXCEEDED"
+        }
+      ]
+    },
+    "concurrent_request_limit": {
+      "status_code": 503,
+      "body": [
+        {
+          "message": "Concurrent per-org limit exceeded",
+          "errorCode": "SERVER_UNAVAILABLE"
+        }
+      ]
+    }
+  },
+  "platform_events": {
+    "publish_success": {
+      "status_code": 201,
+      "body": {
+        "id": "e00xx0000000001MockAAA",
+        "success": true,
+        "errors": []
+      }
+    },
+    "publish_invalid_payload": {
+      "status_code": 400,
+      "body": [
+        {
+          "message": "Required field missing: Status__c",
+          "errorCode": "REQUIRED_FIELD_MISSING",
+          "fields": ["Status__c"]
+        }
+      ]
+    },
+    "publish_limit_exceeded": {
+      "status_code": 400,
+      "body": [
+        {
+          "message": "Platform Events daily limit exceeded",
+          "errorCode": "LIMIT_EXCEEDED",
+          "fields": []
+        }
+      ]
+    }
+  },
+  "composite": {
+    "all_success": {
+      "status_code": 200,
+      "body": {
+        "compositeResponse": [
+          {
+            "body": {"id": "001Dn000001CompAA2", "success": true, "errors": []},
+            "httpStatusCode": 201,
+            "referenceId": "refAccount1"
+          },
+          {
+            "body": {"id": "003Dn000001CompBB3", "success": true, "errors": []},
+            "httpStatusCode": 201,
+            "referenceId": "refContact1"
+          }
+        ]
+      }
+    },
+    "partial_failure_all_or_none": {
+      "status_code": 400,
+      "body": {
+        "compositeResponse": [
+          {
+            "body": [{"message": "Required fields missing: [Name]", "errorCode": "REQUIRED_FIELD_MISSING"}],
+            "httpStatusCode": 400,
+            "referenceId": "refAccount1"
+          },
+          {
+            "body": [{"message": "The transaction was rolled back", "errorCode": "PROCESSING_HALTED"}],
+            "httpStatusCode": 400,
+            "referenceId": "refContact1"
+          }
+        ]
+      }
+    }
+  }
+}

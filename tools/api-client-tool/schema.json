@@ -1,0 +1,124 @@
+{
+  "tool_id": "api-client-tool",
+  "version": "2.0.0",
+  "description": "Secure HTTP client tool for migration platform internal APIs",
+
+  "input_schema": {
+    "type": "object",
+    "required": ["method", "url"],
+    "additionalProperties": false,
+    "properties": {
+      "method": {
+        "type": "string",
+        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+        "description": "HTTP method"
+      },
+      "url": {
+        "type": "string",
+        "format": "uri",
+        "description": "Full URL — must match allowed_hosts in config",
+        "pattern": "^https?://[a-zA-Z0-9.\\-_]+/"
+      },
+      "params": {
+        "type": "object",
+        "description": "URL query parameters",
+        "additionalProperties": {"type": "string"}
+      },
+      "body": {
+        "type": "object",
+        "description": "Request body (never logged — may contain sensitive data)",
+        "additionalProperties": true
+      },
+      "expected_schema": {
+        "type": "object",
+        "description": "JSON Schema to validate response against",
+        "additionalProperties": true
+      },
+      "trace_id": {
+        "type": "string",
+        "description": "Caller-provided trace ID for request correlation",
+        "maxLength": 128
+      },
+      "headers": {
+        "type": "object",
+        "description": "Additional request headers",
+        "additionalProperties": {"type": "string"}
+      }
+    }
+  },
+
+  "output_schema": {
+    "oneOf": [
+      {
+        "title": "Success",
+        "type": "object",
+        "required": ["success", "status_code", "body", "trace_id"],
+        "properties": {
+          "success": {"type": "boolean", "const": true},
+          "status_code": {"type": "integer", "minimum": 100, "maximum": 599},
+          "body": {},
+          "headers": {"type": "object"},
+          "trace_id": {"type": "string"},
+          "duration_ms": {"type": "number"},
+          "attempt": {"type": "integer"},
+          "url": {"type": "string"}
+        }
+      },
+      {
+        "title": "Error",
+        "type": "object",
+        "required": ["error", "code", "message"],
+        "properties": {
+          "error": {"type": "boolean", "const": true},
+          "code": {
+            "type": "string",
+            "enum": [
+              "RATE_LIMITED",
+              "CIRCUIT_OPEN",
+              "TIMEOUT",
+              "HTTP_ERROR",
+              "SCHEMA_VALIDATION_FAILED",
+              "HOST_NOT_ALLOWED",
+              "MAX_RETRIES_EXCEEDED",
+              "REQUEST_ERROR",
+              "INVALID_METHOD"
+            ]
+          },
+          "message": {"type": "string"},
+          "http_status": {"type": ["integer", "null"]},
+          "trace_id": {"type": ["string", "null"]},
+          "attempt": {"type": ["integer", "null"]},
+          "url": {"type": ["string", "null"]},
+          "details": {"type": ["object", "null"]}
+        }
+      }
+    ]
+  },
+
+  "config": {
+    "allowed_hosts": [
+      "api.migration.internal",
+      "kafka-exporter.internal",
+      "spire-agent.internal",
+      "vault.internal"
+    ],
+    "rate_limit_per_minute": 60,
+    "circuit_breaker_threshold": 5,
+    "circuit_breaker_recovery_timeout_seconds": 60,
+    "timeout_seconds": 30,
+    "max_retries": 3,
+    "backoff_factor": 2.0,
+    "initial_delay_seconds": 1.0,
+    "max_delay_seconds": 60.0,
+    "audit_logging": true,
+    "log_request_bodies": false,
+    "log_response_bodies": false
+  },
+
+  "security": {
+    "tls_required": true,
+    "auth": "bearer_token_via_env",
+    "pii_safe_logging": true,
+    "request_body_never_logged": true
+  }
+}

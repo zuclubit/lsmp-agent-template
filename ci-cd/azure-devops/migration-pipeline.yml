@@ -1,0 +1,467 @@
+##############################################################################
+# migration-pipeline.yml (Azure DevOps)
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Azure DevOps pipeline specifically for executing the data migration
+#           Supports full / incremental scopes with approval gates per env
+##############################################################################
+
+trigger: none    # Manual trigger only — no automatic triggers
+
+parameters:
+  - name: environment
+    displayName: "Target Environment"
+    type: string
+    default: staging
+    values:
+      - dev
+      - staging
+      - prod
+
+  - name: migrationScope
+    displayName: "Migration Scope"
+    type: string
+    default: incremental
+    values:
+      - full
+      - incremental
+      - "object:Account"
+      - "object:Contact"
+      - "object:Lead"
+      - "object:Opportunity"
+      - "object:Case"
+
+  - name: dryRun
+    displayName: "Dry Run (no writes to Salesforce)"
+    type: boolean
+    default: true
+
+  - name: batchSize
+    displayName: "Batch Size (records)"
+    type: number
+    default: 1000
+
+  - name: sinceDate
+    displayName: "Incremental Since Date (ISO 8601, leave blank for auto)"
+    type: string
+    default: ""
+
+  - name: maxErrorPercent
+    displayName: "Max Error % Before Abort"
+    type: number
+    default: 1
+
+  - name: notifyOnCompletion
+    displayName: "Send Slack notification on completion"
+    type: boolean
+    default: true
+
+variables:
+  - group: sfmigration-global
+  - group: sfmigration-${{ parameters.environment }}
+  - name: PYTHON_VERSION
+    value: "3.12"
+  - name: MIGRATION_SCOPE
+    value: ${{ parameters.migrationScope }}
+  - name: ENVIRONMENT
+    value: ${{ parameters.environment }}
+  - name: DRY_RUN
+    value: ${{ parameters.dryRun }}
+  - name: BATCH_SIZE
+    value: ${{ parameters.batchSize }}
+  - name: MAX_ERROR_PERCENT
+    value: ${{ parameters.maxErrorPercent }}
+  - name: NAMESPACE
+    value: sfmigration-${{ parameters.environment }}
+
+pool:
+  vmImage: "ubuntu-latest"
+
+stages:
+
+###############################################################################
+# STAGE 1 — Pre-flight
+###############################################################################
+
+- stage: PreFlight
+  displayName: "Pre-flight Checks"
+  jobs:
+
+  - job: ValidateAndPrepare
+    displayName: "Validate Parameters & Generate Migration ID"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - script: |
+          set -e
+          MIGRATION_ID="mig-$(date +%Y%m%d-%H%M%S)-${RANDOM}"
+          echo "##vso[task.setvariable variable=MIGRATION_ID;isOutput=true]${MIGRATION_ID}"
+          echo "##vso[build.addbuildtag]migration-id:${MIGRATION_ID}"
+          echo "##vso[build.addbuildtag]env:${{ parameters.environment }}"
+          echo "Migration ID: ${MIGRATION_ID}"
+          echo "Scope       : $(MIGRATION_SCOPE)"
+          echo "Environment : $(ENVIRONMENT)"
+          echo "Batch Size  : $(BATCH_SIZE)"
+          echo "Dry Run     : $(DRY_RUN)"
+          echo "Max Errors  : $(MAX_ERROR_PERCENT)%"
+
+          if [ "$(BATCH_SIZE)" -gt "10000" ]; then
+            echo "ERROR: batch_size cannot exceed 10000"
+            exit 1
+          fi
+        displayName: Generate Migration ID & Validate
+        name: SetMigrationId
+
+      - script: |
+          if [ "$(ENVIRONMENT)" = "prod" ] && [ "$(DRY_RUN)" = "False" ]; then
+            echo "##vso[build.addbuildtag]PRODUCTION-WRITE"
+            echo "WARNING: This will write to PRODUCTION Salesforce!"
+          fi
+        displayName: Production write guard
+
+###############################################################################
+# STAGE 2 — Manual Approval (prod only)
+###############################################################################
+
+- stage: ProductionApproval
+  displayName: "Production Approval Gate"
+  dependsOn: PreFlight
+  condition: |
+    and(
+      succeeded('PreFlight'),
+      eq('${{ parameters.environment }}', 'prod'),
+      eq('${{ parameters.dryRun }}', 'false')
+    )
+  jobs:
+  - job: ApprovalPlaceholder
+    displayName: "Awaiting approval (configured in ADO Environment)"
+    pool: server    # Server-side job for gate
+    steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 60
+        inputs:
+          notifyUsers: |
+            $(APPROVAL_REVIEWERS)
+          instructions: |
+            PRODUCTION MIGRATION APPROVAL REQUIRED
+
+            Scope    : ${{ parameters.migrationScope }}
+            Batch    : ${{ parameters.batchSize }}
+            Dry Run  : ${{ parameters.dryRun }}
+            Actor    : $(Build.RequestedFor)
+
+            This will write live data to production Salesforce.
+            Review the migration plan before approving.
+
+            Pipeline: $(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)
+
+###############################################################################
+# STAGE 3 — Extract
+###############################################################################
+
+- stage: Extract
+  displayName: "Extract from Legacy System"
+  dependsOn:
+    - PreFlight
+    - ${{ if and(eq(parameters.environment, 'prod'), eq(string(parameters.dryRun), 'False')) }}:
+      - ProductionApproval
+  condition: succeeded()
+  variables:
+    MIGRATION_ID: $[ stageDependencies.PreFlight.ValidateAndPrepare.outputs['SetMigrationId.MIGRATION_ID'] ]
+  jobs:
+
+  - job: RunExtract
+    displayName: "Extract — ${{ parameters.migrationScope }}"
+    timeoutInMinutes: 240
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-migration.txt
+        displayName: Install dependencies
+
+      - script: |
+          set -e
+          mkdir -p migration-data/extract
+
+          SINCE_DATE_ARG=""
+          if [ -n "${{ parameters.sinceDate }}" ]; then
+            SINCE_DATE_ARG="--since ${{ parameters.sinceDate }}"
+          fi
+
+          python -m migration.cli extract \
+            --scope "$(MIGRATION_SCOPE)" \
+            --batch-size "$(BATCH_SIZE)" \
+            --output-dir ./migration-data/extract \
+            --migration-id "$(MIGRATION_ID)" \
+            ${SINCE_DATE_ARG} \
+            --format parquet \
+            --checkpoint-enabled \
+            --log-format json 2>&1 | tee extract-output.log
+
+          RECORD_COUNT=$(grep '"records_extracted"' extract-output.log | tail -1 | python3 -c "import sys,json;print(json.loads(sys.stdin.read()).get('records_extracted',0))" || echo "0")
+          echo "##vso[task.setvariable variable=EXTRACT_COUNT;isOutput=true]${RECORD_COUNT}"
+          echo "Extracted ${RECORD_COUNT} records"
+        displayName: Run extraction
+        name: ExtractStep
+        env:
+          DATABASE_URL: $(DATABASE_URL)
+          LEGACY_DB_URL: $(LEGACY_DB_URL)
+          MIGRATION_ID: $(MIGRATION_ID)
+
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: migration-data/extract
+          artifactName: extract-data-$(MIGRATION_ID)
+        displayName: Publish extract artifacts
+
+###############################################################################
+# STAGE 4 — Validate Source
+###############################################################################
+
+- stage: ValidateSource
+  displayName: "Validate Source Data"
+  dependsOn: Extract
+  condition: succeeded()
+  variables:
+    MIGRATION_ID: $[ stageDependencies.PreFlight.ValidateAndPrepare.outputs['SetMigrationId.MIGRATION_ID'] ]
+  jobs:
+
+  - job: RunValidation
+    displayName: "Validate source data quality"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - task: DownloadBuildArtifacts@1
+        inputs:
+          artifactName: extract-data-$(MIGRATION_ID)
+          downloadPath: migration-data/extract
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-migration.txt
+        displayName: Install dependencies
+
+      - script: |
+          set -e
+          mkdir -p migration-data
+
+          python -m migration.cli validate-source \
+            --input-dir ./migration-data/extract \
+            --report-output ./migration-data/validation-source-report.json \
+            --migration-id "$(MIGRATION_ID)" \
+            --strict-mode \
+            --log-format json 2>&1 | tee validate-source-output.log
+
+          STATUS=$(python3 -c "import json;d=json.load(open('migration-data/validation-source-report.json'));print(d.get('status','failed'))")
+          ERRORS=$(python3 -c "import json;d=json.load(open('migration-data/validation-source-report.json'));print(len(d.get('errors',[])))")
+          echo "##vso[task.setvariable variable=VALIDATION_STATUS;isOutput=true]${STATUS}"
+          echo "Validation status: ${STATUS}, errors: ${ERRORS}"
+
+          if [ "${STATUS}" = "failed" ]; then
+            echo "Source validation failed!"
+            exit 1
+          fi
+        displayName: Run source validation
+        name: ValidationStep
+
+      - task: PublishBuildArtifacts@1
+        condition: always()
+        inputs:
+          pathToPublish: migration-data/validation-source-report.json
+          artifactName: validation-report-$(MIGRATION_ID)
+
+###############################################################################
+# STAGE 5 — Transform
+###############################################################################
+
+- stage: Transform
+  displayName: "Transform Data"
+  dependsOn: ValidateSource
+  condition: succeeded()
+  variables:
+    MIGRATION_ID: $[ stageDependencies.PreFlight.ValidateAndPrepare.outputs['SetMigrationId.MIGRATION_ID'] ]
+  jobs:
+
+  - job: RunTransform
+    displayName: "Transform — map legacy to SF schema"
+    timeoutInMinutes: 180
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - task: DownloadBuildArtifacts@1
+        inputs:
+          artifactName: extract-data-$(MIGRATION_ID)
+          downloadPath: migration-data/extract
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-migration.txt
+        displayName: Install dependencies
+
+      - script: |
+          set -e
+          mkdir -p migration-data/transformed
+
+          python -m migration.cli transform \
+            --input-dir ./migration-data/extract \
+            --output-dir ./migration-data/transformed \
+            --migration-id "$(MIGRATION_ID)" \
+            --scope "$(MIGRATION_SCOPE)" \
+            --parallelism 4 \
+            --log-format json 2>&1 | tee transform-output.log
+
+          TRANSFORMED=$(grep '"records_transformed"' transform-output.log | tail -1 | python3 -c "import sys,json;print(json.loads(sys.stdin.read()).get('records_transformed',0))" || echo "0")
+          echo "##vso[task.setvariable variable=TRANSFORM_COUNT;isOutput=true]${TRANSFORMED}"
+          echo "Transformed ${TRANSFORMED} records"
+        displayName: Run transformation
+        name: TransformStep
+        env:
+          REDIS_URL: $(REDIS_URL)
+          MIGRATION_ID: $(MIGRATION_ID)
+
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: migration-data/transformed
+          artifactName: transformed-data-$(MIGRATION_ID)
+
+###############################################################################
+# STAGE 6 — Load to Salesforce
+###############################################################################
+
+- stage: Load
+  displayName: "Load to Salesforce"
+  dependsOn: Transform
+  condition: succeeded()
+  variables:
+    MIGRATION_ID: $[ stageDependencies.PreFlight.ValidateAndPrepare.outputs['SetMigrationId.MIGRATION_ID'] ]
+  jobs:
+
+  - job: RunLoad
+    displayName: "Load — Salesforce Bulk API"
+    timeoutInMinutes: 360
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - task: DownloadBuildArtifacts@1
+        inputs:
+          artifactName: transformed-data-$(MIGRATION_ID)
+          downloadPath: migration-data/transformed
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-migration.txt
+        displayName: Install dependencies
+
+      - script: |
+          set -e
+          mkdir -p migration-data/load-results
+
+          DRY_RUN_FLAG=""
+          if [ "$(DRY_RUN)" = "True" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+
+          python -m migration.cli load \
+            --input-dir ./migration-data/transformed \
+            --output-dir ./migration-data/load-results \
+            --migration-id "$(MIGRATION_ID)" \
+            --batch-size "$(BATCH_SIZE)" \
+            --max-error-percent "$(MAX_ERROR_PERCENT)" \
+            --api-version "59.0" \
+            --use-bulk-api \
+            ${DRY_RUN_FLAG} \
+            --log-format json 2>&1 | tee load-output.log
+
+          LOADED=$(grep '"records_loaded"' load-output.log | tail -1 | python3 -c "import sys,json;print(json.loads(sys.stdin.read()).get('records_loaded',0))" || echo "0")
+          FAILED=$(grep '"records_failed"' load-output.log | tail -1 | python3 -c "import sys,json;print(json.loads(sys.stdin.read()).get('records_failed',0))" || echo "0")
+          echo "##vso[task.setvariable variable=LOAD_COUNT]${LOADED}"
+          echo "##vso[task.setvariable variable=FAIL_COUNT]${FAILED}"
+          echo "Loaded: ${LOADED}, Failed: ${FAILED}"
+        displayName: Run load phase
+        env:
+          SF_INSTANCE_URL: $(SF_INSTANCE_URL)
+          SF_CLIENT_ID: $(SF_CLIENT_ID)
+          SF_CLIENT_SECRET: $(SF_CLIENT_SECRET)
+          DATABASE_URL: $(DATABASE_URL)
+          MIGRATION_ID: $(MIGRATION_ID)
+
+      - task: PublishBuildArtifacts@1
+        condition: always()
+        inputs:
+          pathToPublish: migration-data/load-results
+          artifactName: load-results-$(MIGRATION_ID)
+
+###############################################################################
+# STAGE 7 — Report
+###############################################################################
+
+- stage: Report
+  displayName: "Reconcile & Report"
+  dependsOn:
+    - PreFlight
+    - Extract
+    - ValidateSource
+    - Transform
+    - Load
+  condition: always()
+  variables:
+    MIGRATION_ID: $[ stageDependencies.PreFlight.ValidateAndPrepare.outputs['SetMigrationId.MIGRATION_ID'] ]
+  jobs:
+
+  - job: GenerateReport
+    displayName: "Generate Migration Report"
+    steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: $(PYTHON_VERSION)
+
+      - script: |
+          pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-migration.txt jinja2
+        displayName: Install dependencies
+
+      - script: |
+          python -m migration.cli report \
+            --migration-id "$(MIGRATION_ID)" \
+            --output migration-report.html \
+            --format html \
+            --log-format json 2>&1 | tee report-output.log || true
+        displayName: Generate HTML report
+
+      - task: PublishBuildArtifacts@1
+        inputs:
+          pathToPublish: migration-report.html
+          artifactName: migration-report-$(MIGRATION_ID)
+
+      - script: |
+          if [ "${{ parameters.notifyOnCompletion }}" = "True" ]; then
+            curl -s -X POST "${SLACK_MIGRATION_WEBHOOK}" \
+              -H 'Content-Type: application/json' \
+              -d "{
+                \"text\": \":bar_chart: *Migration Pipeline Completed*\",
+                \"attachments\": [{
+                  \"fields\": [
+                    {\"title\": \"Migration ID\", \"value\": \"$(MIGRATION_ID)\", \"short\": true},
+                    {\"title\": \"Environment\", \"value\": \"$(ENVIRONMENT)\", \"short\": true},
+                    {\"title\": \"Scope\", \"value\": \"$(MIGRATION_SCOPE)\", \"short\": true},
+                    {\"title\": \"Dry Run\", \"value\": \"$(DRY_RUN)\", \"short\": true},
+                    {\"title\": \"Pipeline\", \"value\": \"$(System.TeamFoundationCollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)\", \"short\": false}
+                  ]
+                }]
+              }"
+          fi
+        displayName: Send Slack notification
+        env:
+          SLACK_MIGRATION_WEBHOOK: $(SLACK_MIGRATION_WEBHOOK)
+        condition: always()

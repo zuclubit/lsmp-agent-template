@@ -1,0 +1,6 @@
+{
+  "server_name": "documentation-context",
+  "port": 8101,
+  "docs_path": "docs/",
+  "runbooks_path": "monitoring/runbooks/"
+}

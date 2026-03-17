@@ -1,0 +1,319 @@
+##############################################################################
+# allow-api.yaml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Explicit allow network policies — principle of least privilege
+#           Each policy grants exactly the traffic a workload requires
+##############################################################################
+
+---
+# Allow ingress from nginx ingress controller to API gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-api-gateway
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# Allow ingress from Prometheus scraper to API gateway /metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape-api
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 8000
+          protocol: TCP
+
+---
+# Allow ingress from Prometheus to migration worker /metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scrape-migration
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migration-worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+        - port: 8080
+          protocol: TCP
+
+---
+# Allow API gateway to reach migration worker health endpoint
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-migration-worker
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migration-worker
+      app.kubernetes.io/component: worker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api-gateway
+              app.kubernetes.io/component: api
+      ports:
+        - port: 8080
+          protocol: TCP
+
+---
+# Allow API gateway egress to PostgreSQL (private endpoint in data subnet)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-egress-postgres
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 5432
+          protocol: TCP
+
+---
+# Allow migration worker egress to PostgreSQL
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-migration-egress-postgres
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migration-worker
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 5432
+          protocol: TCP
+
+---
+# Allow egress to Redis (SSL port 6380)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-redis
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [api-gateway, migration-worker]
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 6380
+          protocol: TCP
+
+---
+# Allow egress to Kafka (within the cluster)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-kafka
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [api-gateway, migration-worker]
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kafka
+      ports:
+        - port: 9092
+          protocol: TCP
+        - port: 9093
+          protocol: TCP
+
+---
+# Allow egress to Azure Key Vault HTTPS (port 443)
+# Key Vault is accessed via private endpoint — traffic stays in VNet
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-keyvault
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [api-gateway, migration-worker]
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# Allow egress to Salesforce API (external HTTPS)
+# Source: both api-gateway and migration-worker need this
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-salesforce
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [api-gateway, migration-worker]
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+
+---
+# Allow egress to OpenTelemetry collector in monitoring namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-otel
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [api-gateway, migration-worker]
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opentelemetry-collector
+      ports:
+        - port: 4317
+          protocol: TCP
+        - port: 4318
+          protocol: TCP
+
+---
+# Allow migration worker to access Azure Service Bus (port 443 / 5671 AMQP)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-servicebus
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/part-of: sfmigration
+    policy-type: allow
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migration-worker
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 5671
+          protocol: TCP
+        - port: 5672
+          protocol: TCP

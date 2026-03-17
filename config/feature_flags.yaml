@@ -1,0 +1,347 @@
+---
+# Feature Flags Configuration — Legacy to Salesforce Migration
+# Version: 1.0.0
+# Last Updated: 2026-03-16
+#
+# Flags are evaluated at runtime and can be overridden via:
+# 1. Environment variables (FEATURE_<FLAG_NAME>=true/false)
+# 2. This config file (default values)
+# 3. LaunchDarkly / feature flag service (if configured)
+#
+# Flag lifecycle:
+#   experimental -> beta -> ga -> deprecated -> removed
+
+feature_flags:
+
+  # ============================================================
+  # MIGRATION PHASE GATES
+  # These control which migration phases are enabled per environment
+  # ============================================================
+
+  enable_account_migration:
+    description: "Enable Account object migration pipeline"
+    default: true
+    environments:
+      dev: true
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "migration-team"
+    lifecycle: "ga"
+    jira_ticket: "MIGS-001"
+
+  enable_contact_migration:
+    description: "Enable Contact object migration pipeline"
+    default: true
+    environments:
+      dev: true
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "migration-team"
+    lifecycle: "ga"
+    jira_ticket: "MIGS-002"
+
+  enable_opportunity_migration:
+    description: "Enable Opportunity object migration pipeline"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false  # Requires manual enablement in prod
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "beta"
+    jira_ticket: "MIGS-003"
+    notes: "Awaiting business sign-off on opportunity field mapping"
+
+  enable_case_migration:
+    description: "Enable Case object migration pipeline"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "experimental"
+    jira_ticket: "MIGS-004"
+
+  enable_attachment_migration:
+    description: "Enable file/attachment migration (high storage impact)"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "experimental"
+    jira_ticket: "MIGS-010"
+    notes: "Requires dedicated storage budget approval"
+
+  # ============================================================
+  # API AND SALESFORCE FEATURES
+  # ============================================================
+
+  use_bulk_api_v2:
+    description: "Use Salesforce Bulk API v2 instead of v1 for data loading"
+    default: true
+    environments:
+      dev: true
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "platform-team"
+    lifecycle: "ga"
+    performance_impact: "Increases throughput by ~30% for large datasets"
+
+  enable_salesforce_composite_api:
+    description: "Use Composite API for multi-object operations in a single request"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "beta"
+    jira_ticket: "PLAT-089"
+
+  enable_salesforce_platform_events:
+    description: "Publish Salesforce Platform Events on successful record creation"
+    default: false
+    environments:
+      dev: false
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "integration-team"
+    lifecycle: "experimental"
+
+  # ============================================================
+  # TRANSFORMATION FEATURES
+  # ============================================================
+
+  enable_parallel_transformation:
+    description: "Transform records in parallel using thread pool"
+    default: false
+    environments:
+      dev: false
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "beta"
+    notes: "Monitor CPU utilization carefully before enabling in prod"
+
+  enable_ai_field_validation:
+    description: "Use AI/ML model for smart field validation and anomaly detection"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "data-science-team"
+    lifecycle: "experimental"
+    jira_ticket: "DS-042"
+    dependencies: ["openai_api_key_configured"]
+
+  enable_smart_deduplication:
+    description: "AI-powered deduplication during transformation (fuzzy matching)"
+    default: false
+    environments:
+      dev: true
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "data-science-team"
+    lifecycle: "experimental"
+
+  enable_address_normalization:
+    description: "Normalize and validate addresses using address API"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "data-team"
+    lifecycle: "beta"
+
+  # ============================================================
+  # MIGRATION STRATEGIES
+  # ============================================================
+
+  enable_incremental_migration:
+    description: "Enable incremental migration (delta sync based on modified date)"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "beta"
+    notes: "Full migration must complete before enabling incremental"
+    jira_ticket: "MIGS-100"
+
+  enable_bidirectional_sync:
+    description: "Allow changes in Salesforce to sync back to legacy system"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "integration-team"
+    lifecycle: "experimental"
+    notes: "CAUTION: Risk of data conflicts. Requires extensive testing."
+
+  enable_live_cutover_mode:
+    description: "Enable live cutover mode (dual-write to both systems)"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "experimental"
+    approval_required: true
+
+  # ============================================================
+  # SECURITY FEATURES
+  # ============================================================
+
+  enable_field_level_encryption:
+    description: "Encrypt sensitive fields (SSN, financial data) at field level"
+    default: false
+    environments:
+      dev: false
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "security-team"
+    lifecycle: "ga"
+
+  enable_audit_tamper_chain:
+    description: "Enable HMAC chain for tamper-evident audit logs"
+    default: false
+    environments:
+      dev: false
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "security-team"
+    lifecycle: "ga"
+
+  enable_pii_tokenization:
+    description: "Tokenize PII at extraction (only tokens flow through pipeline)"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "security-team"
+    lifecycle: "experimental"
+    jira_ticket: "SEC-120"
+
+  # ============================================================
+  # OBSERVABILITY FEATURES
+  # ============================================================
+
+  enable_distributed_tracing:
+    description: "Enable OpenTelemetry distributed tracing"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: true
+    rollout_percentage: 100
+    owner: "platform-team"
+    lifecycle: "ga"
+
+  enable_detailed_sql_tracing:
+    description: "Include SQL query text in traces (may expose PII)"
+    default: false
+    environments:
+      dev: true
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "ga"
+    notes: "NEVER enable in production — SQL may contain PII"
+
+  enable_realtime_dashboard:
+    description: "Enable real-time WebSocket updates for migration dashboard"
+    default: false
+    environments:
+      dev: true
+      staging: true
+      production: false
+    rollout_percentage: 0
+    owner: "frontend-team"
+    lifecycle: "beta"
+
+  # ============================================================
+  # A/B TEST FLAGS
+  # ============================================================
+
+  ab_test_batch_size_strategy:
+    description: "A/B test: fixed vs adaptive batch sizing"
+    default: "fixed"
+    values: ["fixed", "adaptive"]
+    environments:
+      dev: "adaptive"
+      staging: "adaptive"
+      production: "fixed"
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "experimental"
+    experiment_id: "EXP-2026-003"
+    experiment_end_date: "2026-06-30"
+
+  # ============================================================
+  # KILL SWITCHES
+  # Kill switches disable problematic features in emergencies
+  # ============================================================
+
+  kill_switch_bulk_api:
+    description: "EMERGENCY: Disable all Bulk API calls and fall back to REST"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "ga"
+    notes: "Set to true IMMEDIATELY if Bulk API incidents are detected"
+
+  kill_switch_kafka_publishing:
+    description: "EMERGENCY: Disable Kafka event publishing"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "platform-team"
+    lifecycle: "ga"
+
+  kill_switch_all_migrations:
+    description: "EMERGENCY: Halt all active migration jobs"
+    default: false
+    environments:
+      dev: false
+      staging: false
+      production: false
+    rollout_percentage: 0
+    owner: "migration-team"
+    lifecycle: "ga"
+    notes: "Nuclear option — use only in critical emergencies"
+    approval_required: true

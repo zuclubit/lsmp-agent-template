@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Profile: Migration_Admin
+    Description: Full administrative profile for the Legacy-to-Salesforce
+                 migration team. Grants all object and field permissions
+                 required to execute, monitor, and roll back migrations.
+    Author  : Migration Platform Team
+    Modified: 2026-03-16
+-->
+<Profile xmlns="http://soap.sforce.com/2006/04/metadata">
+    <custom>true</custom>
+    <description>Migration Admin - Full access profile for migration operations team</description>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         APPLICATION VISIBILITY
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <applicationVisibilities>
+        <application>standard__Service</application>
+        <default>false</default>
+        <visible>true</visible>
+    </applicationVisibilities>
+    <applicationVisibilities>
+        <application>standard__Sales</application>
+        <default>true</default>
+        <visible>true</visible>
+    </applicationVisibilities>
+    <applicationVisibilities>
+        <application>Migration_App</application>
+        <default>false</default>
+        <visible>true</visible>
+    </applicationVisibilities>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         CLASS ACCESS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <classAccesses>
+        <apexClass>AccountService</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>MigrationBatchProcessor</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>IntegrationService</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AuditLogService</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>MigrationDashboardController</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>AccountTriggerHandler</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         FIELD PERMISSIONS — ACCOUNT
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Legacy_ID__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Batch__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Completed_Date__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Failed_Date__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Active__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Address_Verified__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>false</editable>
+        <field>Account.Name</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.AccountNumber</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Phone</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Website</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Industry</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.AnnualRevenue</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.BillingStreet</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.BillingCity</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.BillingState</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.BillingPostalCode</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.BillingCountry</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Description</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Type</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         FIELD PERMISSIONS — MIGRATIONLOG__C
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Batch_Job_Id__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Run_Id__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Object_Name__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Processed__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Success__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Failed__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Summary__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Dry_Run__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         OBJECT PERMISSIONS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>true</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>true</modifyAllRecords>
+        <object>Account</object>
+        <viewAllRecords>true</viewAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>true</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>true</modifyAllRecords>
+        <object>Contact</object>
+        <viewAllRecords>true</viewAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>true</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>true</modifyAllRecords>
+        <object>MigrationLog__c</object>
+        <viewAllRecords>true</viewAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>true</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>true</modifyAllRecords>
+        <object>Audit_Log__c</object>
+        <viewAllRecords>true</viewAllRecords>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>false</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <modifyAllRecords>false</modifyAllRecords>
+        <object>Opportunity</object>
+        <viewAllRecords>true</viewAllRecords>
+    </objectPermissions>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         PAGE LAYOUT ASSIGNMENTS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <pageAccesses>
+        <apexPage>MigrationDashboardPage</apexPage>
+        <enabled>true</enabled>
+    </pageAccesses>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         CUSTOM PERMISSIONS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <customPermissions>
+        <enabled>true</enabled>
+        <name>Migration_Bypass_Lock</name>
+    </customPermissions>
+    <customPermissions>
+        <enabled>true</enabled>
+        <name>Run_Migration_Batch</name>
+    </customPermissions>
+    <customPermissions>
+        <enabled>true</enabled>
+        <name>View_Migration_Audit_Logs</name>
+    </customPermissions>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         TAB VISIBILITY
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <tabVisibilities>
+        <tab>MigrationLog__c</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+    <tabVisibilities>
+        <tab>Audit_Log__c</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+    <tabVisibilities>
+        <tab>standard-Account</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+    <tabVisibilities>
+        <tab>standard-Contact</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+    <tabVisibilities>
+        <tab>standard-report</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+    <tabVisibilities>
+        <tab>standard-Dashboard</tab>
+        <visibility>DefaultOn</visibility>
+    </tabVisibilities>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         USER LICENSE / SYSTEM SETTINGS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <userLicense>Salesforce</userLicense>
+
+    <loginHours>
+        <sundayStart>0</sundayStart>
+        <sundayEnd>1440</sundayEnd>
+        <mondayStart>0</mondayStart>
+        <mondayEnd>1440</mondayEnd>
+        <tuesdayStart>0</tuesdayStart>
+        <tuesdayEnd>1440</tuesdayEnd>
+        <wednesdayStart>0</wednesdayStart>
+        <wednesdayEnd>1440</wednesdayEnd>
+        <thursdayStart>0</thursdayStart>
+        <thursdayEnd>1440</thursdayEnd>
+        <fridayStart>0</fridayStart>
+        <fridayEnd>1440</fridayEnd>
+        <saturdayStart>0</saturdayStart>
+        <saturdayEnd>1440</saturdayEnd>
+    </loginHours>
+
+</Profile>

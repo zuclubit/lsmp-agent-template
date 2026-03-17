@@ -1,0 +1,310 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://migration-platform.internal/schemas/validation-agent/v1.4.0",
+  "title": "ValidationAgentSchema",
+  "description": "JSON Schema for Validation Agent inputs and outputs (API spec v1.4.0)",
+  "version": "1.4.0",
+  "definitions": {
+    "CheckStatus": {
+      "type": "string",
+      "enum": ["PASSED", "FAILED", "WARNING", "SKIPPED"],
+      "description": "Status of an individual validation check"
+    },
+    "CheckSeverity": {
+      "type": "string",
+      "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"],
+      "description": "Severity of the check if it fails"
+    },
+    "GateStatus": {
+      "type": "string",
+      "enum": ["PASSED", "FAILED", "WARNING", "SKIPPED"],
+      "description": "Aggregate status of a validation gate"
+    },
+    "OverallStatus": {
+      "type": "string",
+      "enum": ["PASSED", "PASSED_WITH_WARNINGS", "FAILED"],
+      "description": "Overall migration validation decision"
+    },
+    "ValidationCheck": {
+      "type": "object",
+      "required": ["check_id", "description", "actual_value", "expected_value", "status", "severity"],
+      "properties": {
+        "check_id": {
+          "type": "string",
+          "description": "Unique identifier for this check (UUID prefix)"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what was checked"
+        },
+        "actual_value": {
+          "description": "The observed value (string, number, or object)"
+        },
+        "expected_value": {
+          "description": "The expected/threshold value"
+        },
+        "status": {
+          "$ref": "#/definitions/CheckStatus"
+        },
+        "severity": {
+          "$ref": "#/definitions/CheckSeverity"
+        },
+        "detail": {
+          "type": ["string", "null"],
+          "description": "Additional detail, sample data, or error message"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ValidationGate": {
+      "type": "object",
+      "required": ["gate_id", "name", "status", "checks"],
+      "properties": {
+        "gate_id": {
+          "type": "string",
+          "enum": [
+            "gate1_source_completeness",
+            "gate2_target_validity",
+            "gate3_post_load_sample"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/GateStatus"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ValidationCheck"
+          },
+          "minItems": 0
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ValidationThresholds": {
+      "type": "object",
+      "description": "Thresholds used during this validation run",
+      "properties": {
+        "required_field_null_max_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "record_count_discrepancy_max_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "referential_integrity_min_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "phone_format_validity_min_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "transformation_rejection_max_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "sample_field_match_min_pct": {"type": "number", "minimum": 0, "maximum": 100},
+        "post_load_sample_size": {"type": "integer", "minimum": 10, "maximum": 10000}
+      },
+      "additionalProperties": false
+    }
+  },
+  "properties": {
+    "request": {
+      "type": "object",
+      "description": "Input schema for ValidationAgent.run()",
+      "required": ["migration_id"],
+      "properties": {
+        "migration_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration run identifier"
+        },
+        "entity_names": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Source entity names for record count checks",
+          "default": ["Account", "Contact"]
+        },
+        "object_names": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Salesforce object API names for required field checks",
+          "default": ["Account", "Contact"]
+        },
+        "skip_gate3": {
+          "type": "boolean",
+          "default": false,
+          "description": "Skip gate 3 if load phase has not completed"
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "description": "Output schema: ValidationGateResult",
+      "required": [
+        "result_id",
+        "migration_id",
+        "overall_status",
+        "gates",
+        "evaluated_at"
+      ],
+      "properties": {
+        "result_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique result identifier"
+        },
+        "migration_id": {
+          "type": "string",
+          "description": "Migration run identifier"
+        },
+        "overall_status": {
+          "$ref": "#/definitions/OverallStatus"
+        },
+        "gates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ValidationGate"
+          },
+          "minItems": 2,
+          "maxItems": 3,
+          "description": "Results for each of the three validation gates"
+        },
+        "blocking_reason": {
+          "type": ["string", "null"],
+          "description": "Human-readable reason why migration is blocked (null if not blocked)"
+        },
+        "thresholds_used": {
+          "$ref": "#/definitions/ValidationThresholds"
+        },
+        "evaluated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when validation completed"
+        },
+        "total_duration_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Total validation duration in milliseconds"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tool_results": {
+      "type": "object",
+      "description": "Schemas for individual tool return values",
+      "properties": {
+        "check_source_record_count": {
+          "type": "object",
+          "required": ["migration_id", "entity_name", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "entity_name": {"type": "string"},
+            "source_count": {"type": "integer", "minimum": 0},
+            "extracted_count": {"type": "integer", "minimum": 0},
+            "discrepancy_count": {"type": "integer", "minimum": 0},
+            "discrepancy_pct": {"type": "number", "minimum": 0},
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "check_required_fields_populated": {
+          "type": "object",
+          "required": ["migration_id", "object_name", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "object_name": {"type": "string"},
+            "total_records": {"type": "integer", "minimum": 0},
+            "fields_checked": {"type": "integer", "minimum": 0},
+            "violations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {"type": "string"},
+                  "null_count": {"type": "integer"},
+                  "null_pct": {"type": "number"}
+                }
+              }
+            },
+            "violation_count": {"type": "integer", "minimum": 0},
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "check_referential_integrity": {
+          "type": "object",
+          "required": ["migration_id", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "total_relationship_records": {"type": "integer", "minimum": 0},
+            "orphaned_records": {"type": "integer", "minimum": 0},
+            "integrity_pct": {"type": "number", "minimum": 0, "maximum": 100},
+            "orphaned_sample": {"type": "array", "items": {"type": "object"}},
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "check_phone_format_validity": {
+          "type": "object",
+          "required": ["migration_id", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "total_phone_records": {"type": "integer", "minimum": 0},
+            "invalid_format_count": {"type": "integer", "minimum": 0},
+            "validity_pct": {"type": "number", "minimum": 0, "maximum": 100},
+            "invalid_samples": {"type": "array", "items": {"type": "string"}},
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING", "SKIPPED"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "sample_loaded_salesforce_records": {
+          "type": "object",
+          "required": ["migration_id", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "sampled_count": {"type": "integer", "minimum": 0},
+            "field_match_count": {"type": "integer", "minimum": 0},
+            "field_mismatch_count": {"type": "integer", "minimum": 0},
+            "match_pct": {"type": "number", "minimum": 0, "maximum": 100},
+            "mismatch_samples": {"type": "array", "items": {"type": "object"}},
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        },
+        "check_transformation_rejection_rate": {
+          "type": "object",
+          "required": ["migration_id", "status"],
+          "properties": {
+            "migration_id": {"type": "string"},
+            "total_input_records": {"type": "integer", "minimum": 0},
+            "rejected_count": {"type": "integer", "minimum": 0},
+            "rejection_pct": {"type": "number", "minimum": 0, "maximum": 100},
+            "rejection_reasons": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "reason": {"type": "string"},
+                  "count": {"type": "integer"}
+                }
+              }
+            },
+            "status": {"type": "string", "enum": ["PASSED", "FAILED", "WARNING"]},
+            "error": {"type": "string"},
+            "message": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

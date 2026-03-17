@@ -1,0 +1,479 @@
+##############################################################################
+# migration-pipeline.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Trigger : Manual dispatch (with full parameter control)
+# Purpose : End-to-end data migration workflow:
+#           Extract → Validate Source → Transform → Validate Target →
+#           Load to Salesforce → Reconcile → Report
+##############################################################################
+
+name: Migration Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      migration_scope:
+        description: "Migration scope (full | incremental | object:<ObjectName>)"
+        required: true
+        type: string
+        default: "incremental"
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      batch_size:
+        description: "Records per batch (default: 1000)"
+        required: false
+        type: string
+        default: "1000"
+      dry_run:
+        description: "Dry run mode — validate without writing to Salesforce"
+        required: false
+        type: boolean
+        default: true
+      since_date:
+        description: "Incremental start date (ISO 8601: 2024-01-01T00:00:00Z)"
+        required: false
+        type: string
+      notify_on_completion:
+        description: "Send Slack notification on completion"
+        required: false
+        type: boolean
+        default: true
+      max_error_percent:
+        description: "Maximum error percentage before aborting (0.0–100.0)"
+        required: false
+        type: string
+        default: "1.0"
+
+concurrency:
+  group: migration-${{ github.event.inputs.environment }}
+  cancel-in-progress: false   # Never cancel a running migration
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment }}
+  MIGRATION_SCOPE: ${{ github.event.inputs.migration_scope }}
+  BATCH_SIZE: ${{ github.event.inputs.batch_size || '1000' }}
+  DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+  MAX_ERROR_PERCENT: ${{ github.event.inputs.max_error_percent || '1.0' }}
+  NAMESPACE: sfmigration-${{ github.event.inputs.environment }}
+  AKS_CLUSTER: aks-sfmigration-${{ github.event.inputs.environment }}-eus2
+  RESOURCE_GROUP: rg-sfmigration-${{ github.event.inputs.environment }}-eus2
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+
+  ##############################################################################
+  # 0. Pre-flight checks
+  ##############################################################################
+  preflight:
+    name: Pre-flight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      migration-id: ${{ steps.gen-id.outputs.migration_id }}
+      run-start-time: ${{ steps.gen-id.outputs.start_time }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate migration run ID
+        id: gen-id
+        run: |
+          MIGRATION_ID="mig-$(date +%Y%m%d-%H%M%S)-$(echo $RANDOM | md5sum | head -c 6)"
+          echo "migration_id=$MIGRATION_ID" >> "$GITHUB_OUTPUT"
+          echo "start_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "Migration ID: $MIGRATION_ID"
+
+      - name: Validate inputs
+        run: |
+          echo "Validating migration parameters..."
+          echo "  Scope      : ${{ env.MIGRATION_SCOPE }}"
+          echo "  Environment: ${{ env.ENVIRONMENT }}"
+          echo "  Batch Size : ${{ env.BATCH_SIZE }}"
+          echo "  Dry Run    : ${{ env.DRY_RUN }}"
+          echo "  Max Errors : ${{ env.MAX_ERROR_PERCENT }}%"
+
+          # Validate batch size is numeric and within range
+          if ! [[ "${{ env.BATCH_SIZE }}" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: batch_size must be a positive integer"
+            exit 1
+          fi
+          if [ "${{ env.BATCH_SIZE }}" -gt "10000" ]; then
+            echo "ERROR: batch_size cannot exceed 10000"
+            exit 1
+          fi
+
+      - name: Production dry-run guard
+        if: env.ENVIRONMENT == 'prod' && env.DRY_RUN == 'false'
+        run: |
+          echo "WARNING: Production migration with dry_run=false requested."
+          echo "This will write data to production Salesforce."
+          echo "Actor: ${{ github.actor }}"
+          # Additional checks could be added here (e.g., time-of-day window)
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets[format('AZURE_SUBSCRIPTION_ID_{0}', env.ENVIRONMENT)] }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER }} \
+            --overwrite-existing
+
+      - name: Check cluster health
+        run: |
+          kubectl get nodes -n ${{ env.NAMESPACE }}
+          kubectl get pods -n ${{ env.NAMESPACE }} -l app.kubernetes.io/part-of=sfmigration
+
+  ##############################################################################
+  # 1. Extract — pull data from legacy source system
+  ##############################################################################
+  extract:
+    name: Extract from Legacy
+    runs-on: ubuntu-latest
+    needs: preflight
+    outputs:
+      record-count: ${{ steps.extract.outputs.record_count }}
+      extract-status: ${{ steps.extract.outputs.status }}
+      checkpoint-key: ${{ steps.extract.outputs.checkpoint_key }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-migration.txt
+
+      - name: Run extract phase
+        id: extract
+        run: |
+          python -m migration.cli extract \
+            --scope "${{ env.MIGRATION_SCOPE }}" \
+            --batch-size "${{ env.BATCH_SIZE }}" \
+            --output-dir ./migration-data/extract \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            ${{ github.event.inputs.since_date && format('--since {0}', github.event.inputs.since_date) || '' }} \
+            --format parquet \
+            --checkpoint-enabled \
+            --log-format json 2>&1 | tee extract-output.log
+
+          # Parse output metrics
+          RECORD_COUNT=$(grep '"records_extracted"' extract-output.log | tail -1 | jq '.records_extracted' || echo "0")
+          CHECKPOINT_KEY=$(grep '"checkpoint_key"' extract-output.log | tail -1 | jq -r '.checkpoint_key' || echo "")
+          STATUS=$(grep '"phase_status"' extract-output.log | tail -1 | jq -r '.phase_status' || echo "unknown")
+
+          echo "record_count=$RECORD_COUNT" >> "$GITHUB_OUTPUT"
+          echo "checkpoint_key=$CHECKPOINT_KEY" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "Extracted $RECORD_COUNT records"
+        env:
+          DATABASE_URL: ${{ secrets[format('{0}_DATABASE_URL', env.ENVIRONMENT)] }}
+          LEGACY_DB_URL: ${{ secrets[format('{0}_LEGACY_DB_URL', env.ENVIRONMENT)] }}
+          MIGRATION_ID: ${{ needs.preflight.outputs.migration-id }}
+
+      - name: Upload extract artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: extract-data-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/extract/
+          retention-days: 3
+
+  ##############################################################################
+  # 2. Validate source data
+  ##############################################################################
+  validate-source:
+    name: Validate Source Data
+    runs-on: ubuntu-latest
+    needs: [preflight, extract]
+    if: needs.extract.outputs.extract-status == 'success'
+    outputs:
+      validation-status: ${{ steps.validate.outputs.status }}
+      error-count: ${{ steps.validate.outputs.error_count }}
+      warning-count: ${{ steps.validate.outputs.warning_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download extract data
+        uses: actions/download-artifact@v4
+        with:
+          name: extract-data-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/extract/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-migration.txt
+
+      - name: Run source data validation
+        id: validate
+        run: |
+          python -m migration.cli validate-source \
+            --input-dir ./migration-data/extract \
+            --report-output ./migration-data/validation-source-report.json \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            --strict-mode \
+            --log-format json 2>&1 | tee validate-source-output.log
+
+          STATUS=$(jq -r '.status' migration-data/validation-source-report.json || echo "failed")
+          ERROR_COUNT=$(jq '.errors | length' migration-data/validation-source-report.json || echo "0")
+          WARNING_COUNT=$(jq '.warnings | length' migration-data/validation-source-report.json || echo "0")
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "error_count=$ERROR_COUNT" >> "$GITHUB_OUTPUT"
+          echo "warning_count=$WARNING_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Source validation: status=$STATUS, errors=$ERROR_COUNT, warnings=$WARNING_COUNT"
+
+          if [ "$STATUS" = "failed" ]; then
+            echo "Source data validation failed with $ERROR_COUNT errors"
+            exit 1
+          fi
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-source-report-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/validation-source-report.json
+
+  ##############################################################################
+  # 3. Transform
+  ##############################################################################
+  transform:
+    name: Transform Data
+    runs-on: ubuntu-latest
+    needs: [preflight, extract, validate-source]
+    if: needs.validate-source.outputs.validation-status == 'passed'
+    outputs:
+      transform-status: ${{ steps.transform.outputs.status }}
+      transformed-count: ${{ steps.transform.outputs.transformed_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download extract data
+        uses: actions/download-artifact@v4
+        with:
+          name: extract-data-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/extract/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-migration.txt
+
+      - name: Run transform phase
+        id: transform
+        run: |
+          python -m migration.cli transform \
+            --input-dir ./migration-data/extract \
+            --output-dir ./migration-data/transformed \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            --scope "${{ env.MIGRATION_SCOPE }}" \
+            --parallelism 4 \
+            --log-format json 2>&1 | tee transform-output.log
+
+          STATUS=$(grep '"phase_status"' transform-output.log | tail -1 | jq -r '.phase_status' || echo "unknown")
+          TRANSFORMED=$(grep '"records_transformed"' transform-output.log | tail -1 | jq '.records_transformed' || echo "0")
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "transformed_count=$TRANSFORMED" >> "$GITHUB_OUTPUT"
+          echo "Transformed $TRANSFORMED records"
+        env:
+          REDIS_URL: ${{ secrets[format('{0}_REDIS_URL', env.ENVIRONMENT)] }}
+          MIGRATION_ID: ${{ needs.preflight.outputs.migration-id }}
+
+      - name: Upload transformed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transformed-data-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/transformed/
+          retention-days: 3
+
+  ##############################################################################
+  # 4. Load to Salesforce
+  ##############################################################################
+  load:
+    name: Load to Salesforce
+    runs-on: ubuntu-latest
+    needs: [preflight, transform]
+    if: needs.transform.outputs.transform-status == 'success'
+    outputs:
+      load-status: ${{ steps.load.outputs.status }}
+      loaded-count: ${{ steps.load.outputs.loaded_count }}
+      failed-count: ${{ steps.load.outputs.failed_count }}
+      error-rate: ${{ steps.load.outputs.error_rate }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download transformed data
+        uses: actions/download-artifact@v4
+        with:
+          name: transformed-data-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/transformed/
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-migration.txt
+
+      - name: Run load phase
+        id: load
+        run: |
+          DRY_RUN_FLAG=""
+          if [ "${{ env.DRY_RUN }}" = "true" ]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+
+          python -m migration.cli load \
+            --input-dir ./migration-data/transformed \
+            --output-dir ./migration-data/load-results \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            --batch-size "${{ env.BATCH_SIZE }}" \
+            --max-error-percent "${{ env.MAX_ERROR_PERCENT }}" \
+            --api-version "59.0" \
+            --use-bulk-api \
+            $DRY_RUN_FLAG \
+            --log-format json 2>&1 | tee load-output.log
+
+          STATUS=$(grep '"phase_status"' load-output.log | tail -1 | jq -r '.phase_status' || echo "unknown")
+          LOADED=$(grep '"records_loaded"' load-output.log | tail -1 | jq '.records_loaded' || echo "0")
+          FAILED=$(grep '"records_failed"' load-output.log | tail -1 | jq '.records_failed' || echo "0")
+          ERROR_RATE=$(grep '"error_rate_percent"' load-output.log | tail -1 | jq '.error_rate_percent' || echo "0")
+
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "loaded_count=$LOADED" >> "$GITHUB_OUTPUT"
+          echo "failed_count=$FAILED" >> "$GITHUB_OUTPUT"
+          echo "error_rate=$ERROR_RATE" >> "$GITHUB_OUTPUT"
+          echo "Load: loaded=$LOADED, failed=$FAILED, error_rate=$ERROR_RATE%"
+        env:
+          SF_INSTANCE_URL: ${{ secrets[format('{0}_SF_INSTANCE_URL', env.ENVIRONMENT)] }}
+          SF_CLIENT_ID: ${{ secrets[format('{0}_SF_CLIENT_ID', env.ENVIRONMENT)] }}
+          SF_CLIENT_SECRET: ${{ secrets[format('{0}_SF_CLIENT_SECRET', env.ENVIRONMENT)] }}
+          DATABASE_URL: ${{ secrets[format('{0}_DATABASE_URL', env.ENVIRONMENT)] }}
+          MIGRATION_ID: ${{ needs.preflight.outputs.migration-id }}
+
+      - name: Upload load results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: load-results-${{ needs.preflight.outputs.migration-id }}
+          path: migration-data/load-results/
+          retention-days: 30
+
+  ##############################################################################
+  # 5. Reconcile and generate report
+  ##############################################################################
+  reconcile-and-report:
+    name: Reconcile & Report
+    runs-on: ubuntu-latest
+    needs: [preflight, extract, validate-source, transform, load]
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt -r requirements-migration.txt jinja2
+
+      - name: Run reconciliation
+        if: needs.load.outputs.load-status == 'success' && env.DRY_RUN == 'false'
+        run: |
+          python -m migration.cli reconcile \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            --scope "${{ env.MIGRATION_SCOPE }}" \
+            --output-dir ./migration-data/reconciliation \
+            --log-format json
+        env:
+          SF_INSTANCE_URL: ${{ secrets[format('{0}_SF_INSTANCE_URL', env.ENVIRONMENT)] }}
+          SF_CLIENT_ID: ${{ secrets[format('{0}_SF_CLIENT_ID', env.ENVIRONMENT)] }}
+          SF_CLIENT_SECRET: ${{ secrets[format('{0}_SF_CLIENT_SECRET', env.ENVIRONMENT)] }}
+          DATABASE_URL: ${{ secrets[format('{0}_DATABASE_URL', env.ENVIRONMENT)] }}
+
+      - name: Generate migration report
+        run: |
+          python -m migration.cli report \
+            --migration-id "${{ needs.preflight.outputs.migration-id }}" \
+            --output ./migration-data/migration-report.html \
+            --format html \
+            --stats '{
+              "scope": "${{ env.MIGRATION_SCOPE }}",
+              "environment": "${{ env.ENVIRONMENT }}",
+              "extracted": ${{ needs.extract.outputs.record-count || 0 }},
+              "transformed": ${{ needs.transform.outputs.transformed-count || 0 }},
+              "loaded": ${{ needs.load.outputs.loaded-count || 0 }},
+              "failed": ${{ needs.load.outputs.failed-count || 0 }},
+              "error_rate": ${{ needs.load.outputs.error-rate || 0 }},
+              "dry_run": ${{ env.DRY_RUN }},
+              "started_at": "${{ needs.preflight.outputs.run-start-time }}",
+              "completed_at": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"
+            }'
+
+      - name: Upload migration report
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-report-${{ needs.preflight.outputs.migration-id }}
+          path: |
+            migration-data/migration-report.html
+            migration-data/reconciliation/
+          retention-days: 90
+
+      - name: Post migration summary
+        if: github.event.inputs.notify_on_completion == 'true'
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":bar_chart: *Migration Pipeline Completed*",
+              "attachments": [{
+                "color": "${{ needs.load.outputs.load-status == 'success' && 'good' || 'warning' }}",
+                "fields": [
+                  { "title": "Migration ID", "value": "${{ needs.preflight.outputs.migration-id }}", "short": true },
+                  { "title": "Environment", "value": "${{ env.ENVIRONMENT }}", "short": true },
+                  { "title": "Scope", "value": "${{ env.MIGRATION_SCOPE }}", "short": true },
+                  { "title": "Dry Run", "value": "${{ env.DRY_RUN }}", "short": true },
+                  { "title": "Extracted", "value": "${{ needs.extract.outputs.record-count || 'N/A' }}", "short": true },
+                  { "title": "Loaded", "value": "${{ needs.load.outputs.loaded-count || 'N/A' }}", "short": true },
+                  { "title": "Failed", "value": "${{ needs.load.outputs.failed-count || 'N/A' }}", "short": true },
+                  { "title": "Error Rate", "value": "${{ needs.load.outputs.error-rate || 'N/A' }}%", "short": true }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_MIGRATION_WEBHOOK }}

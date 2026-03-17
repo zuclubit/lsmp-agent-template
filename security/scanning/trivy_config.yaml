@@ -1,0 +1,253 @@
+# Trivy Security Scanner Configuration
+# Legacy to Salesforce Migration Platform
+# Version: 1.0.0
+# Reference: https://aquasecurity.github.io/trivy/
+
+# ============================================================
+# GLOBAL SETTINGS
+# ============================================================
+
+# Cache directory for vulnerability database
+cache:
+  dir: /tmp/trivy-cache
+  ttl: 24h  # Refresh DB every 24 hours
+
+# Timeout for long scans
+timeout: 10m0s
+
+# Output format: table, json, sarif, template, cyclonedx, spdx, spdx-json
+format: json
+
+# Output file
+output: reports/trivy-report.json
+
+# ============================================================
+# VULNERABILITY SCANNING
+# ============================================================
+
+vulnerability:
+  # Severity levels to include: UNKNOWN, LOW, MEDIUM, HIGH, CRITICAL
+  severity:
+    - MEDIUM
+    - HIGH
+    - CRITICAL
+
+  # Fail on these severities (used with --exit-code 1)
+  exit_code_severities:
+    - HIGH
+    - CRITICAL
+
+  # Ignore vulnerabilities that have no available fix
+  ignore_unfixed: false
+
+  # Ignore specific CVEs (must be reviewed and documented)
+  # Format: CVE-YYYY-NNNNN
+  ignore_cves: []
+  # Example documented exceptions:
+  # - CVE-2023-XXXXX  # Triaged: not exploitable in our config, tracked in SEC-JIRA-001
+
+  # Types of vulnerabilities to check
+  vuln_type:
+    - os
+    - library
+
+# ============================================================
+# SECRET SCANNING
+# ============================================================
+
+secret:
+  # Enable secret scanning in container images and files
+  enable: true
+
+  # Config for secret patterns
+  config: security/scanning/trivy-secret-config.yaml
+
+  # Secret rule sets to use
+  # Built-in: aws, azure, gcp, github, gitlab, slack, etc.
+  additional_rules: []
+
+# ============================================================
+# CONTAINER IMAGE SCANNING
+# ============================================================
+
+image:
+  # Platforms to check (for multi-arch images)
+  platform: linux/amd64
+
+  # Remove image from local Docker after scan (for CI)
+  removed_pkgs: false
+
+  # Scan image layers
+  layers: true
+
+  # Include non-distribution packages
+  include_dev_deps: false
+
+# ============================================================
+# IaC SCANNING (Terraform, Kubernetes, Helm)
+# ============================================================
+
+iac:
+  # IaC file types to scan
+  file_patterns:
+    - "**/*.tf"
+    - "**/*.tfvars"
+    - "**/*.yaml"
+    - "**/*.yml"
+    - "**/*.json"
+    - "**/*.hcl"
+    - "**/Dockerfile*"
+    - "**/*.dockerfile"
+
+  # Kubernetes specific
+  kubernetes:
+    # Ignore namespaces in K8s manifest checks
+    ignore_namespaces:
+      - kube-system
+      - monitoring
+    # Namespaces to always check
+    required_namespaces:
+      - migration-system
+
+  # Checks to skip (must be documented)
+  skip_checks: []
+  # Example:
+  # - AVD-DS-0002  # Container running as root — addressed via securityContext, checked in helm chart
+
+# ============================================================
+# SBOM GENERATION
+# ============================================================
+
+sbom:
+  # Generate SBOM during scan
+  generate: true
+  # SBOM format: cyclonedx, spdx, spdx-json
+  format: cyclonedx
+  output: reports/sbom.cyclonedx.json
+
+# ============================================================
+# COMPLIANCE CHECKS
+# ============================================================
+
+compliance:
+  # Standards to check against
+  spec:
+    - nist-800-190   # NIST Application Container Security Guide
+    - docker-cis     # CIS Docker Benchmark
+    - k8s-cis        # CIS Kubernetes Benchmark
+
+  # Report format for compliance
+  report: reports/trivy-compliance.json
+
+# ============================================================
+# MISCONFIG SCANNING
+# ============================================================
+
+misconfiguration:
+  # Enable misconfiguration scanning
+  enable: true
+
+  # Include passed checks in output (not just failures)
+  include_non_failures: false
+
+  # Severity levels to report
+  severity:
+    - MEDIUM
+    - HIGH
+    - CRITICAL
+
+  # Policy files for OPA/Rego custom policies
+  policy:
+    - security/scanning/trivy-policies/
+
+  # Namespaces for OPA policies
+  policy_namespaces:
+    - company.migration
+
+# ============================================================
+# FILESYSTEM SCANNING
+# ============================================================
+
+filesystem:
+  # Paths to scan for secrets and vulnerabilities
+  paths:
+    - .
+
+  # Skip these paths
+  skip_dirs:
+    - .git
+    - .venv
+    - node_modules
+    - __pycache__
+    - .pytest_cache
+    - dist
+    - build
+    - htmlcov
+
+  # Skip specific files
+  skip_files:
+    - "*.pyc"
+    - "*.pyo"
+    - ".DS_Store"
+    - "*.lock"  # Dependency lock files are still scanned via library check
+
+# ============================================================
+# DATABASE SETTINGS
+# ============================================================
+
+db:
+  # Use a mirror for air-gapped environments
+  # repository: ghcr.io/your-org/trivy-db
+  skip_update: false
+  light: false
+
+# ============================================================
+# CI/CD INTEGRATION
+# ============================================================
+#
+# Container image scan (per-build in CI):
+#   trivy image \
+#     --config security/scanning/trivy_config.yaml \
+#     --format sarif --output reports/trivy-image.sarif \
+#     --exit-code 1 \
+#     migration-api:${GIT_SHA}
+#
+# IaC scan (on infrastructure changes):
+#   trivy config \
+#     --config security/scanning/trivy_config.yaml \
+#     --format sarif --output reports/trivy-iac.sarif \
+#     --exit-code 1 \
+#     infrastructure/
+#
+# Filesystem scan (secret detection on every PR):
+#   trivy fs \
+#     --config security/scanning/trivy_config.yaml \
+#     --scanners secret \
+#     --exit-code 1 \
+#     .
+#
+# SBOM generation (on main branch merge):
+#   trivy image \
+#     --format cyclonedx \
+#     --output reports/sbom.cyclonedx.json \
+#     migration-api:${GIT_SHA}
+#
+# Severity gates:
+#   - CRITICAL: Always fail build
+#   - HIGH: Fail build (with exception process)
+#   - MEDIUM: Report only; tracked in vulnerability management
+#   - LOW/UNKNOWN: Report only; reviewed quarterly
+
+# ============================================================
+# NOTIFICATIONS
+# ============================================================
+#
+# Critical findings trigger:
+#   1. Slack alert to #security-alerts channel
+#   2. JIRA ticket creation in SECOPS project
+#   3. PagerDuty alert if in production image
+#
+# Reports uploaded to:
+#   1. GitHub Security tab (SARIF format)
+#   2. Security dashboard (Elasticsearch)
+#   3. Artifact storage (for compliance evidence)

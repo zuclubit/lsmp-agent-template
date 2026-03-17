@@ -1,0 +1,371 @@
+# Migration Workflow Definition
+# Version: 2.0.0
+# Workflow: migration_run
+#
+# Phases: PRE_VALIDATION → PLANNING → SECURITY_GATE → VALIDATION_GATE → EXECUTION → POST_VALIDATION
+# Each phase produces outputs consumed by the next.
+# Blocking gates between phases prevent advancement on failure.
+# Rollback steps are defined for each destructive phase.
+
+workflow:
+  name: migration_run
+  version: "2.0.0"
+  description: "Full end-to-end enterprise data migration workflow"
+  timeout_minutes: 480
+  rollback_enabled: true
+  audit_logging: required
+
+# ---------------------------------------------------------------------------
+# Phase 1: PRE_VALIDATION
+# ---------------------------------------------------------------------------
+phases:
+
+  - phase: PRE_VALIDATION
+    order: 1
+    agent: validation-agent
+    description: >
+      Validate source data completeness, schema conformance, and record counts
+      before any planning or execution begins. This phase is read-only against
+      the source system.
+    inputs:
+      required:
+        - name: migration_id
+          type: string
+          description: "Unique identifier for this migration run"
+        - name: source_connection_string
+          type: secret_ref
+          description: "Vault path to source DB credentials"
+        - name: source_schema_manifest
+          type: object
+          description: "Expected schema for source entities"
+        - name: tenant_id
+          type: string
+          description: "Tenant identifier for isolation"
+      optional:
+        - name: previous_migration_id
+          type: string
+          description: "Prior run ID for incremental migrations"
+
+    outputs:
+      - name: validation_report
+        type: object
+        schema_ref: "schemas/validation_report.json"
+      - name: source_record_count
+        type: integer
+        description: "Total records found in source"
+      - name: schema_diff_report
+        type: object
+        description: "Differences from expected schema"
+      - name: null_rate_by_field
+        type: object
+        description: "Per-field null rates in source data"
+
+    success_criteria:
+      - "validation_report.gate1_passed == true"
+      - "source_record_count > 0"
+      - "schema_diff_report.breaking_changes == 0"
+
+    failure_action: BLOCK
+    failure_report: "PRE_VALIDATION failed — migration cannot proceed. Review schema_diff_report and validation_report."
+
+    gate_after:
+      name: gate1_source_completeness
+      pass_condition: "validation_report.gate1_passed == true AND source_record_count > 0"
+      on_pass: advance_to_PLANNING
+      on_fail: BLOCK
+
+# ---------------------------------------------------------------------------
+# Phase 2: PLANNING
+# ---------------------------------------------------------------------------
+  - phase: PLANNING
+    order: 2
+    agent: orchestrator-agent
+    description: >
+      Build the execution plan: determine chunking strategy, record ordering,
+      transformation rules, estimated duration, and risk classification.
+    inputs:
+      required:
+        - name: validation_report
+          source: PRE_VALIDATION.validation_report
+        - name: source_record_count
+          source: PRE_VALIDATION.source_record_count
+        - name: migration_config
+          type: object
+          description: "Full migration configuration from config store"
+        - name: tenant_id
+          type: string
+      optional:
+        - name: schema_diff_report
+          source: PRE_VALIDATION.schema_diff_report
+
+    outputs:
+      - name: execution_plan
+        type: object
+        schema_ref: "schemas/execution_plan.json"
+        required_fields: [chunk_count, chunk_size, ordering, risk_level, estimated_duration_minutes]
+      - name: chunk_manifest
+        type: array
+        description: "List of chunk descriptors with offset and limit"
+      - name: estimated_duration_minutes
+        type: integer
+      - name: transformation_rules_applied
+        type: array
+        description: "IDs of transformation rulesets to apply"
+
+    success_criteria:
+      - "execution_plan.chunk_count > 0"
+      - "execution_plan.risk_level IN ['LOW', 'MEDIUM', 'HIGH']"
+
+    failure_action: ESCALATE_TO_HUMAN
+
+    gate_after:
+      name: plan_approval_gate
+      pass_condition: >
+        execution_plan.risk_level IN ['LOW', 'MEDIUM']
+        OR (execution_plan.risk_level == 'HIGH' AND human_approval == true)
+      on_pass: advance_to_SECURITY_GATE
+      on_fail: ESCALATE_TO_HUMAN
+
+# ---------------------------------------------------------------------------
+# Phase 3: SECURITY_GATE
+# ---------------------------------------------------------------------------
+  - phase: SECURITY_GATE
+    order: 3
+    agent: security-agent
+    description: >
+      Run full security audit on execution plan, configuration, and connection
+      parameters before any data movement. Checks secrets, SOQL, API auth,
+      and dependency CVEs. Any CRITICAL finding blocks execution.
+    inputs:
+      required:
+        - name: execution_plan
+          source: PLANNING.execution_plan
+        - name: migration_config
+          type: object
+        - name: source_connection_string
+          type: secret_ref
+        - name: transformation_rules_applied
+          source: PLANNING.transformation_rules_applied
+
+    outputs:
+      - name: security_audit_report
+        type: object
+        schema_ref: "schemas/security_audit_report.json"
+        required_fields: [critical_findings, high_findings, approved_for_execution]
+      - name: approved_for_execution
+        type: boolean
+
+    success_criteria:
+      - "security_audit_report.critical_findings == 0"
+      - "approved_for_execution == true"
+
+    failure_action: BLOCK
+    failure_report: "SECURITY_GATE blocked execution. Review security_audit_report for CRITICAL findings."
+
+    gate_after:
+      name: security_clearance_gate
+      pass_condition: "security_audit_report.critical_findings == 0 AND approved_for_execution == true"
+      on_pass: advance_to_VALIDATION_GATE
+      on_fail: BLOCK
+
+# ---------------------------------------------------------------------------
+# Phase 4: VALIDATION_GATE (pre-execution target check)
+# ---------------------------------------------------------------------------
+  - phase: VALIDATION_GATE
+    order: 4
+    agent: validation-agent
+    description: >
+      Final pre-execution validation: confirm target Salesforce org has
+      sufficient API capacity, correct object permissions, and no conflicting
+      records that would cause duplicates.
+    inputs:
+      required:
+        - name: execution_plan
+          source: PLANNING.execution_plan
+        - name: security_audit_report
+          source: SECURITY_GATE.security_audit_report
+        - name: salesforce_credentials
+          type: secret_ref
+        - name: tenant_id
+          type: string
+
+    outputs:
+      - name: gate2_result
+        type: object
+        required_fields: [passed, api_calls_available, duplicate_risk_score]
+      - name: target_capacity_report
+        type: object
+      - name: api_calls_available
+        type: integer
+
+    success_criteria:
+      - "gate2_result.passed == true"
+      - "api_calls_available >= execution_plan.estimated_api_calls"
+
+    failure_action: BLOCK
+
+    gate_after:
+      name: gate2_target_validity
+      pass_condition: "gate2_result.passed == true"
+      on_pass: advance_to_EXECUTION
+      on_fail: BLOCK
+
+# ---------------------------------------------------------------------------
+# Phase 5: EXECUTION
+# ---------------------------------------------------------------------------
+  - phase: EXECUTION
+    order: 5
+    agent: migration-agent
+    description: >
+      Execute the data migration in chunks via the Kafka pipeline.
+      Reads source data, applies transformations, publishes to Kafka topic,
+      monitors consumer lag, and tracks DLQ depth. Stops immediately if
+      error rate exceeds threshold.
+    inputs:
+      required:
+        - name: execution_plan
+          source: PLANNING.execution_plan
+        - name: chunk_manifest
+          source: PLANNING.chunk_manifest
+        - name: security_audit_report
+          source: SECURITY_GATE.security_audit_report
+        - name: gate2_result
+          source: VALIDATION_GATE.gate2_result
+        - name: tenant_id
+          type: string
+        - name: migration_id
+          type: string
+
+    outputs:
+      - name: migration_result
+        type: object
+        schema_ref: "schemas/migration_result.json"
+        required_fields: [success_rate, records_migrated, records_failed, dlq_count]
+      - name: records_migrated
+        type: integer
+      - name: records_failed
+        type: integer
+      - name: dlq_count
+        type: integer
+      - name: error_manifest
+        type: array
+        description: "List of failed records with error codes"
+      - name: kafka_consumer_lag_final
+        type: integer
+
+    success_criteria:
+      - "migration_result.success_rate >= 0.99"
+      - "dlq_count <= execution_plan.dlq_threshold"
+
+    failure_action: ROLLBACK_AND_ESCALATE
+
+    rollback_steps:
+      - step: 1
+        action: "Halt Kafka producer — stop publishing new records"
+        agent: migration-agent
+        timeout_seconds: 30
+
+      - step: 2
+        action: "Record final DLQ depth and consumer lag metrics"
+        agent: migration-agent
+        timeout_seconds: 30
+
+      - step: 3
+        action: "Invoke Salesforce bulk delete on partial migration batch"
+        agent: migration-agent
+        timeout_seconds: 600
+        requires_human_approval: true
+        human_approval_timeout_minutes: 30
+
+      - step: 4
+        action: "Mark migration_id as ROLLED_BACK in state store"
+        agent: orchestrator-agent
+        timeout_seconds: 30
+
+      - step: 5
+        action: "Emit rollback_complete event to Halcon retrospective"
+        agent: orchestrator-agent
+        timeout_seconds: 10
+
+    gate_after:
+      name: execution_threshold_gate
+      pass_condition: "migration_result.success_rate >= 0.99"
+      on_pass: advance_to_POST_VALIDATION
+      on_fail: ROLLBACK_AND_ESCALATE
+
+# ---------------------------------------------------------------------------
+# Phase 6: POST_VALIDATION
+# ---------------------------------------------------------------------------
+  - phase: POST_VALIDATION
+    order: 6
+    agent: validation-agent
+    description: >
+      Validate migrated data in target Salesforce org using stratified
+      random sampling. Reconcile source record count against target.
+      Check referential integrity across related objects.
+    inputs:
+      required:
+        - name: migration_result
+          source: EXECUTION.migration_result
+        - name: source_record_count
+          source: PRE_VALIDATION.source_record_count
+        - name: records_migrated
+          source: EXECUTION.records_migrated
+        - name: execution_plan
+          source: PLANNING.execution_plan
+        - name: salesforce_credentials
+          type: secret_ref
+        - name: tenant_id
+          type: string
+
+    outputs:
+      - name: post_migration_report
+        type: object
+        schema_ref: "schemas/post_migration_report.json"
+        required_fields: [gate3_passed, sample_size, discrepancy_count]
+      - name: reconciliation_report
+        type: object
+        required_fields: [source_count, target_count, discrepancy_rate]
+      - name: final_record_count
+        type: integer
+
+    success_criteria:
+      - "post_migration_report.gate3_passed == true"
+      - "reconciliation_report.discrepancy_rate <= 0.001"
+      - "final_record_count >= records_migrated * 0.999"
+
+    failure_action: ESCALATE_TO_HUMAN
+
+    gate_after:
+      name: gate3_post_load_sample
+      pass_condition: >
+        post_migration_report.gate3_passed == true
+        AND reconciliation_report.discrepancy_rate <= 0.001
+      on_pass: COMPLETE_WORKFLOW
+      on_fail: ESCALATE_TO_HUMAN
+
+# ---------------------------------------------------------------------------
+# Terminal Actions
+# ---------------------------------------------------------------------------
+terminal_actions:
+
+  COMPLETE_WORKFLOW:
+    actions:
+      - "Write COMPLETED state to migration state store"
+      - "Emit final_utility and convergence_efficiency to Halcon retrospective"
+      - "Send completion notification to tenant"
+      - "Archive migration artifacts to S3"
+
+  BLOCK:
+    actions:
+      - "Write BLOCKED state to migration state store"
+      - "Emit failure metrics to Halcon retrospective"
+      - "Send PagerDuty alert"
+      - "Preserve all artifacts for debugging"
+
+  ESCALATE_TO_HUMAN:
+    actions:
+      - "Write AWAITING_HUMAN state to migration state store"
+      - "Send PagerDuty alert with context"
+      - "Post to #migration-oncall Slack"
+      - "Preserve all current outputs for human review"

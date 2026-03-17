@@ -1,0 +1,308 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/schemas/security-agent/v2.1.0",
+  "title": "SecurityAgent",
+  "description": "Input and output schemas for the Migration Security Agent (API v2.1.0)",
+  "version": "2.1.0",
+
+  "$defs": {
+    "FindingSeverity": {
+      "type": "string",
+      "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"],
+      "description": "Security finding severity level"
+    },
+    "FindingType": {
+      "type": "string",
+      "enum": [
+        "PATH_TRAVERSAL",
+        "SOQL_INJECTION",
+        "HARDCODED_SECRET",
+        "PII_EXPOSURE",
+        "UNAUTHORIZED_PATH"
+      ],
+      "description": "Category of security finding"
+    },
+    "GateDecision": {
+      "type": "string",
+      "enum": ["ALLOW", "WARN", "BLOCK"],
+      "description": "Pipeline gate decision. BLOCK when risk_score > 0.7 or any CRITICAL finding."
+    },
+    "SecurityFinding": {
+      "type": "object",
+      "required": [
+        "finding_id",
+        "finding_type",
+        "severity",
+        "location",
+        "description",
+        "recommendation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "finding_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this finding"
+        },
+        "finding_type": {
+          "$ref": "#/$defs/FindingType"
+        },
+        "severity": {
+          "$ref": "#/$defs/FindingSeverity"
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "description": "File path, field name, or payload location where the issue was found"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable description of the security issue"
+        },
+        "recommendation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Specific remediation action to resolve this finding"
+        },
+        "evidence_snippet": {
+          "type": ["string", "null"],
+          "description": "Redacted/masked evidence — NEVER contains raw secrets or PII"
+        }
+      }
+    },
+    "SecurityAuditResult": {
+      "type": "object",
+      "required": [
+        "audit_id",
+        "job_id",
+        "tenant_id",
+        "passed",
+        "findings",
+        "risk_score",
+        "gate_decision",
+        "checked_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "audit_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "tenant_id": {
+          "type": "string"
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "True when risk_score <= 0.7 AND no CRITICAL findings"
+        },
+        "findings": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SecurityFinding" },
+          "description": "All security findings from deterministic checks"
+        },
+        "risk_score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Composite risk score. > 0.7 blocks the pipeline."
+        },
+        "gate_decision": {
+          "$ref": "#/$defs/GateDecision"
+        },
+        "llm_analysis": {
+          "type": ["string", "null"],
+          "description": "Optional LLM-generated security analysis narrative"
+        },
+        "checked_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "SecurityAgent Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "type": "object",
+      "title": "SecurityAgentInput",
+      "description": "Request payload for the Security Agent",
+      "required": ["job_id", "tenant_id", "payload"],
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Migration job identifier",
+          "examples": ["job-acme-2026-001"]
+        },
+        "tenant_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Multi-tenant identifier"
+        },
+        "payload": {
+          "type": "object",
+          "description": "Migration payload or configuration dict to audit for PII, secrets, and injection risks"
+        },
+        "file_paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "File paths that will be accessed during migration — checked against whitelist"
+        },
+        "soql_queries": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "SOQL query strings to validate for injection risks"
+        },
+        "has_sox_scope": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this migration is under SOX compliance scope"
+        },
+        "request_llm_analysis": {
+          "type": "boolean",
+          "default": false,
+          "description": "When true, invoke the LLM for additional security reasoning on findings"
+        }
+      }
+    },
+
+    "output": {
+      "$ref": "#/$defs/SecurityAuditResult",
+      "title": "SecurityAuditResult",
+      "description": "Security audit result returned by the agent"
+    }
+  },
+
+  "blocking_rules": {
+    "description": "Pipeline is BLOCKED when any of these conditions are true",
+    "conditions": [
+      "risk_score > 0.7",
+      "any finding with severity = CRITICAL",
+      "gate_decision = BLOCK"
+    ]
+  },
+
+  "risk_score_calculation": {
+    "description": "Risk score weights per severity level (summed, capped at 1.0)",
+    "weights": {
+      "CRITICAL": 0.4,
+      "HIGH": 0.2,
+      "MEDIUM": 0.1,
+      "LOW": 0.03
+    },
+    "note": "Any CRITICAL finding sets a minimum risk_score of 0.71"
+  },
+
+  "deterministic_checks": [
+    {
+      "name": "path_whitelist",
+      "description": "Only /var/data/migration/ and /tmp/migration-work/ are permitted",
+      "finding_type": "PATH_TRAVERSAL or UNAUTHORIZED_PATH",
+      "severity": "CRITICAL"
+    },
+    {
+      "name": "soql_injection",
+      "description": "SELECT-only; no semicolons, UNION, or DML keywords",
+      "finding_type": "SOQL_INJECTION",
+      "severity": "CRITICAL or HIGH"
+    },
+    {
+      "name": "entropy_check",
+      "description": "Shannon entropy > 4.5 for strings of length >= 16 flags potential secrets",
+      "finding_type": "HARDCODED_SECRET",
+      "entropy_threshold": 4.5,
+      "min_length": 16,
+      "severity": "CRITICAL (secret key names) or HIGH (other)"
+    },
+    {
+      "name": "pii_detection",
+      "description": "Email, SSN (US), and credit card patterns detected in payload values",
+      "finding_type": "PII_EXPOSURE",
+      "severity": "CRITICAL"
+    }
+  ],
+
+  "examples": [
+    {
+      "input": {
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "payload": {
+          "source_connection": {
+            "host": "db.internal",
+            "port": 5432
+          },
+          "field_mappings": {
+            "email_field": "user@example.com"
+          }
+        },
+        "file_paths": ["/tmp/migration-work/extract/accounts.csv"],
+        "soql_queries": ["SELECT Id, Name FROM Account WHERE IsActive = true"],
+        "has_sox_scope": false,
+        "request_llm_analysis": false
+      },
+      "output": {
+        "audit_id": "b9c3f1a0-4e2d-4abc-87a5-1234567890ab",
+        "job_id": "job-acme-2026-001",
+        "tenant_id": "tenant-acme",
+        "passed": false,
+        "findings": [
+          {
+            "finding_id": "c1d2e3f4-0000-0000-0000-000000000001",
+            "finding_type": "PII_EXPOSURE",
+            "severity": "CRITICAL",
+            "location": "root.field_mappings.email_field",
+            "description": "Raw email address detected at 'root.field_mappings.email_field'. Found 1 instance(s). PII must never be present in migration configuration payloads.",
+            "recommendation": "Remove all email address values from this payload. Use tokenized/pseudonymized references instead.",
+            "evidence_snippet": "type=email_address, count=1, sample=us****@example.com"
+          }
+        ],
+        "risk_score": 0.71,
+        "gate_decision": "BLOCK",
+        "llm_analysis": null,
+        "checked_at": "2026-03-16T12:00:00Z",
+        "duration_ms": 12
+      }
+    },
+    {
+      "input": {
+        "job_id": "job-globex-2026-002",
+        "tenant_id": "tenant-globex",
+        "payload": {
+          "config": { "batch_size": 1000, "timeout": 300 }
+        },
+        "file_paths": ["/var/data/migration/globex/accounts.parquet"],
+        "soql_queries": ["SELECT Id, Name, Phone FROM Account LIMIT 1000"],
+        "has_sox_scope": false,
+        "request_llm_analysis": false
+      },
+      "output": {
+        "audit_id": "d4e5f6a7-1111-2222-3333-444455556666",
+        "job_id": "job-globex-2026-002",
+        "tenant_id": "tenant-globex",
+        "passed": true,
+        "findings": [],
+        "risk_score": 0.0,
+        "gate_decision": "ALLOW",
+        "llm_analysis": null,
+        "checked_at": "2026-03-16T12:05:00Z",
+        "duration_ms": 8
+      }
+    }
+  ]
+}

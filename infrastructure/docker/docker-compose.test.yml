@@ -1,0 +1,188 @@
+###############################################################################
+# docker-compose.test.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Integration test environment — ephemeral, exits with test result
+###############################################################################
+
+version: "3.9"
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 10s
+  timeout: 5s
+  retries: 10
+  start_period: 20s
+
+networks:
+  test-net:
+    driver: bridge
+
+volumes:
+  test-postgres-data:
+  test-redis-data:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Test PostgreSQL (isolated DB per test run)
+  # ---------------------------------------------------------------------------
+  test-postgres:
+    image: postgres:15.6-alpine
+    container_name: sfmigration-test-postgres
+    environment:
+      POSTGRES_DB: sfmigration_test
+      POSTGRES_USER: testadmin
+      POSTGRES_PASSWORD: testpassword123
+    tmpfs:
+      - /var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - test-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "pg_isready -U testadmin -d sfmigration_test"]
+
+  # ---------------------------------------------------------------------------
+  # Test Redis (in-memory, no persistence)
+  # ---------------------------------------------------------------------------
+  test-redis:
+    image: redis:7.2-alpine
+    container_name: sfmigration-test-redis
+    command: redis-server --requirepass testredispass --save ""
+    ports:
+      - "6380:6379"
+    networks:
+      - test-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "-a", "testredispass", "ping"]
+
+  # ---------------------------------------------------------------------------
+  # Mock Kafka using Redpanda (faster startup for tests)
+  # ---------------------------------------------------------------------------
+  test-kafka:
+    image: redpandadata/redpanda:v23.3.7
+    container_name: sfmigration-test-kafka
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --overprovisioned
+      - --kafka-addr PLAINTEXT://0.0.0.0:29093,OUTSIDE://0.0.0.0:9093
+      - --advertise-kafka-addr PLAINTEXT://test-kafka:29093,OUTSIDE://localhost:9093
+      - --pandaproxy-addr 0.0.0.0:8082
+      - --advertise-pandaproxy-addr localhost:8082
+    ports:
+      - "9093:9093"
+      - "8082:8082"
+    networks:
+      - test-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy.+true'"]
+
+  # ---------------------------------------------------------------------------
+  # WireMock — Salesforce API mock
+  # ---------------------------------------------------------------------------
+  wiremock-salesforce:
+    image: wiremock/wiremock:3.4.2-alpine
+    container_name: sfmigration-wiremock-sf
+    command:
+      - --global-response-templating
+      - --verbose
+    volumes:
+      - ../../tests/wiremock/salesforce/__files:/home/wiremock/__files:ro
+      - ../../tests/wiremock/salesforce/mappings:/home/wiremock/mappings:ro
+    ports:
+      - "9001:8080"
+    networks:
+      - test-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/health"]
+
+  # ---------------------------------------------------------------------------
+  # WireMock — Legacy system API mock
+  # ---------------------------------------------------------------------------
+  wiremock-legacy:
+    image: wiremock/wiremock:3.4.2-alpine
+    container_name: sfmigration-wiremock-legacy
+    command:
+      - --global-response-templating
+      - --verbose
+    volumes:
+      - ../../tests/wiremock/legacy/__files:/home/wiremock/__files:ro
+      - ../../tests/wiremock/legacy/mappings:/home/wiremock/mappings:ro
+    ports:
+      - "9002:8080"
+    networks:
+      - test-net
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "curl", "-f", "http://localhost:8080/__admin/health"]
+
+  # ---------------------------------------------------------------------------
+  # Integration test runner
+  # ---------------------------------------------------------------------------
+  integration-tests:
+    build:
+      context: ../../
+      dockerfile: infrastructure/docker/Dockerfile.migration
+      target: dependency-resolver
+    container_name: sfmigration-integration-tests
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "Waiting for dependencies..."
+        python -c "
+        import time, socket
+        for host, port in [('test-postgres', 5432), ('test-redis', 6379), ('test-kafka', 29093)]:
+            for _ in range(30):
+                try:
+                    s = socket.create_connection((host, port), timeout=2)
+                    s.close()
+                    print(f'{host}:{port} is ready')
+                    break
+                except Exception:
+                    time.sleep(2)
+            else:
+                raise RuntimeError(f'{host}:{port} not ready')
+        "
+        echo "Running integration tests..."
+        python -m pytest tests/integration/ \
+          -v \
+          --tb=short \
+          --junitxml=/test-results/integration-results.xml \
+          --cov=src \
+          --cov-report=xml:/test-results/coverage.xml \
+          --cov-report=term-missing \
+          -p no:warnings
+    depends_on:
+      test-postgres:
+        condition: service_healthy
+      test-redis:
+        condition: service_healthy
+      test-kafka:
+        condition: service_healthy
+      wiremock-salesforce:
+        condition: service_healthy
+      wiremock-legacy:
+        condition: service_healthy
+    environment:
+      APP_ENV: test
+      LOG_LEVEL: DEBUG
+      DATABASE_URL: postgresql+asyncpg://testadmin:testpassword123@test-postgres:5432/sfmigration_test
+      REDIS_URL: redis://:testredispass@test-redis:6379/0
+      KAFKA_BOOTSTRAP_SERVERS: test-kafka:29093
+      SF_INSTANCE_URL: http://wiremock-salesforce:8080
+      SF_CLIENT_ID: test-client-id
+      SF_CLIENT_SECRET: test-client-secret
+      LEGACY_API_URL: http://wiremock-legacy:8080
+      BATCH_SIZE: "50"
+    volumes:
+      - ../../src:/app/src:ro
+      - ../../tests:/app/tests:ro
+      - ../../test-results:/test-results
+    networks:
+      - test-net

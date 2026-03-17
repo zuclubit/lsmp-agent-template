@@ -1,0 +1,123 @@
+# Context Servers Configuration — Migration Platform (2026)
+# Defines MCP context server bindings, caching, and access policies.
+
+context_servers:
+
+  project-context:
+    description: "Migration configs, tenant settings, schema mappings, transformation rulesets"
+    server_id: project-context
+    version: "2.0.0"
+    transport: stdio
+    command: ["python", "context-servers/project-context/server.py"]
+    port: 8100
+    retrieval_strategy: api_backed
+    api_base: "${MIGRATION_API_BASE}"
+    caching:
+      enabled: true
+      backend: in_process_ttl
+      default_ttl_seconds: 300
+      tenant_isolated: true
+      per_resource_ttl:
+        migration: 120
+        tenant: 600
+        schema: 1800
+        ruleset: 3600
+        history: 300
+    access_control:
+      tenant_isolation: strict
+      default_role: agent_service
+    indexing:
+      enabled: true
+      rebuild_interval_seconds: 900
+    allowed_paths:
+      - architecture/
+      - docs/
+      - monitoring/runbooks/
+    available_to_agents:
+      - orchestrator-agent
+      - migration-agent
+      - validation-agent
+      - debugging-agent
+
+  documentation-context:
+    description: "Indexed Markdown documentation with keyword search"
+    server_id: documentation-context
+    version: "2.0.0"
+    transport: stdio
+    command: ["python", "context-servers/documentation-context/server.py"]
+    port: 8101
+    indexed_directories:
+      - docs/
+      - architecture/
+      - security/compliance/
+      - halcon/
+    index_ttl_seconds: 3600
+    chunk_size_chars: 1500
+    chunk_overlap_chars: 200
+    docs_path: docs/
+    runbooks_path: monitoring/runbooks/
+    available_to_agents:
+      - orchestrator-agent
+      - debugging-agent
+      - documentation-agent
+
+  runtime-context:
+    description: "Real-time migration job status, Kafka lag, SF limits, SPIRE SVID TTL, DLQ depth"
+    server_id: runtime-context
+    version: "2.0.0"
+    transport: stdio
+    command: ["python", "context-servers/runtime-context/server.py"]
+    port: 8102
+    caching:
+      enabled: false
+      note: "Runtime context is always fetched live — no caching"
+    migration_api_url: "${MIGRATION_API_BASE}"
+    kafka_metrics_api: "${KAFKA_METRICS_API}"
+    prometheus_url: "${PROMETHEUS_URL}"
+    spire_api_base: "${SPIRE_API_BASE}"
+    thresholds:
+      kafka_lag_warn: 1000
+      kafka_lag_critical: 10000
+      dlq_depth_warn: 10
+      dlq_depth_critical: 100
+      salesforce_api_usage_warn_pct: 70
+      salesforce_api_usage_critical_pct: 90
+      spire_rotation_threshold_seconds: 3600
+    available_to_agents:
+      - orchestrator-agent
+      - migration-agent
+      - validation-agent
+      - debugging-agent
+
+  security-context:
+    description: "Security policy: allowed paths, Vault secret names (never values), RBAC, SOQL validation"
+    server_id: security-context
+    version: "2.0.0"
+    transport: stdio
+    command: ["python", "context-servers/security-context/server.py"]
+    port: 8103
+    security_contract:
+      serves_secret_values: false
+      serves_vault_paths_only: true
+      all_access_checks_audited: true
+    spire_socket: /run/spire/sockets/agent.sock
+    vault_addr: "${VAULT_ADDR}"
+    audit:
+      log_path: ".halcon/audit/security-context.jsonl"
+      rotation: daily
+      retention_days: 365
+    available_to_agents:
+      - orchestrator-agent
+      - security-agent
+
+# ---------------------------------------------------------------------------
+# Global Context Server Policies
+# ---------------------------------------------------------------------------
+
+global_policies:
+  mcp_protocol_version: "2024-11-05"
+  transport_default: stdio
+  max_concurrent_server_requests: 10
+  request_timeout_seconds: 15
+  retry_on_server_restart: true
+  health_check_interval_seconds: 30

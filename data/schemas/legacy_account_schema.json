@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://s-agent.example.com/schemas/legacy_account_v1.json",
+  "title": "Legacy Account",
+  "description": "JSON Schema for legacy ERP account records as extracted from the PostgreSQL source database.",
+  "type": "object",
+  "required": ["acct_id", "acct_name", "acct_type", "acct_status", "created_ts"],
+  "additionalProperties": false,
+  "properties": {
+    "acct_id": {
+      "type": "string",
+      "description": "Primary key in the legacy ERP system. Alphanumeric, max 20 chars.",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^[A-Z0-9_-]+$",
+      "examples": ["ACCT00001", "C-1234-XY"]
+    },
+    "acct_name": {
+      "type": "string",
+      "description": "Full legal name of the account/company.",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "acct_type": {
+      "type": "string",
+      "description": "Account type code from legacy system.",
+      "enum": ["CUST", "PROS", "PART", "COMP", "OTHER"],
+      "enumDescriptions": {
+        "CUST": "Customer",
+        "PROS": "Prospect",
+        "PART": "Partner",
+        "COMP": "Competitor",
+        "OTHER": "Other"
+      }
+    },
+    "acct_status": {
+      "type": "string",
+      "description": "Account lifecycle status code.",
+      "enum": ["A", "I", "S", "P"],
+      "enumDescriptions": {
+        "A": "Active",
+        "I": "Inactive",
+        "S": "Suspended",
+        "P": "Pending Review"
+      }
+    },
+    "industry_code": {
+      "type": ["string", "null"],
+      "description": "Short industry classification code.",
+      "enum": ["TECH", "FIN", "HLTH", "MFG", "RET", "GOVT", "EDU", "MEDIA",
+               "BANK", "INS", "TRANS", "UTIL", "AGRI", "CONST", "HOSP", null]
+    },
+    "bill_addr_street": {
+      "type": ["string", "null"],
+      "maxLength": 255
+    },
+    "bill_addr_unit": {
+      "type": ["string", "null"],
+      "description": "Suite, floor, unit number.",
+      "maxLength": 50
+    },
+    "bill_addr_city": {
+      "type": ["string", "null"],
+      "maxLength": 100
+    },
+    "bill_addr_state": {
+      "type": ["string", "null"],
+      "description": "State/province code (US: 2-letter USPS code).",
+      "maxLength": 10
+    },
+    "bill_addr_zip": {
+      "type": ["string", "null"],
+      "description": "Postal / ZIP code.",
+      "maxLength": 20
+    },
+    "bill_addr_country": {
+      "type": ["string", "null"],
+      "description": "ISO 3166-1 alpha-2 country code.",
+      "pattern": "^[A-Z]{2}$",
+      "maxLength": 2
+    },
+    "ship_addr_street": {
+      "type": ["string", "null"],
+      "maxLength": 255
+    },
+    "ship_addr_city": {
+      "type": ["string", "null"],
+      "maxLength": 100
+    },
+    "ship_addr_state": {
+      "type": ["string", "null"],
+      "maxLength": 10
+    },
+    "ship_addr_zip": {
+      "type": ["string", "null"],
+      "maxLength": 20
+    },
+    "ship_addr_country": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Z]{2}$",
+      "maxLength": 2
+    },
+    "phone_number": {
+      "type": ["string", "null"],
+      "description": "Primary phone in E.164 or local format.",
+      "maxLength": 40
+    },
+    "fax_number": {
+      "type": ["string", "null"],
+      "maxLength": 40
+    },
+    "website_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "maxLength": 255
+    },
+    "email_address": {
+      "type": ["string", "null"],
+      "format": "email",
+      "maxLength": 254
+    },
+    "annual_revenue": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Annual revenue in USD.",
+      "examples": [1500000.00, 48000000.00]
+    },
+    "employee_count": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Full-time employee headcount."
+    },
+    "acct_description": {
+      "type": ["string", "null"],
+      "description": "Free-text description of the account.",
+      "maxLength": 4000
+    },
+    "sf_id": {
+      "type": ["string", "null"],
+      "description": "Salesforce record ID assigned after migration (18 chars).",
+      "pattern": "^[a-zA-Z0-9]{18}$"
+    },
+    "created_ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Record creation timestamp in the legacy system (UTC)."
+    },
+    "modified_ts": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last modification timestamp (UTC)."
+    },
+    "row_version": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Optimistic lock counter for concurrency control."
+    }
+  }
+}

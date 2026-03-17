@@ -1,0 +1,87 @@
+##############################################################################
+# migration-service.yaml
+# Project : Legacy-to-Salesforce Migration Platform
+# Purpose : Kubernetes Service for migration worker (internal ClusterIP)
+##############################################################################
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: migration-worker
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: sfmigration
+  annotations:
+    # Azure load balancer annotations (if LoadBalancer type is used)
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /health/ready
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/component: worker
+  ports:
+    - name: health
+      port: 8080
+      targetPort: health
+      protocol: TCP
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+      protocol: TCP
+  # Session affinity not needed — stateless workers
+  sessionAffinity: None
+
+---
+# Headless service for direct pod addressing (useful for Kafka consumer groups)
+apiVersion: v1
+kind: Service
+metadata:
+  name: migration-worker-headless
+  namespace: sfmigration-prod
+  labels:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/part-of: sfmigration
+spec:
+  type: ClusterIP
+  clusterIP: None   # Headless
+  selector:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/component: worker
+  ports:
+    - name: health
+      port: 8080
+      targetPort: health
+      protocol: TCP
+
+---
+# ServiceMonitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: migration-worker-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: migration-worker
+    app.kubernetes.io/part-of: sfmigration
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - sfmigration-prod
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: migration-worker
+      app.kubernetes.io/component: worker
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      scheme: http
+      tlsConfig:
+        insecureSkipVerify: false

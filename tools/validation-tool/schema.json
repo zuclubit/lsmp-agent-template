@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent/tools/validation-tool/schema.json",
+  "title": "ValidationTool",
+  "description": "Executes real data validation queries for migration jobs. All methods return a structured result dict.",
+  "type": "object",
+  "required": ["tool_name", "description", "validation_types"],
+  "properties": {
+    "tool_name": {
+      "type": "string",
+      "const": "validation-tool"
+    },
+    "description": {
+      "type": "string",
+      "const": "Runs real validation queries against live databases and the Salesforce API. All methods return {passed, score, details, sample_records_checked}."
+    },
+    "validation_types": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "validate_record_count",
+          "validate_required_fields",
+          "validate_referential_integrity",
+          "validate_sf_bulk_job"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "common_output_schema": {
+      "type": "object",
+      "title": "ValidationResult",
+      "description": "Shared return structure for all validation methods.",
+      "required": ["passed", "score", "details", "sample_records_checked"],
+      "additionalProperties": false,
+      "properties": {
+        "passed": {
+          "type": "boolean",
+          "description": "Whether the validation check passed."
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "Quality score in [0.0, 1.0]. 1.0 = perfect, 0.0 = complete failure."
+        },
+        "details": {
+          "type": "object",
+          "description": "Method-specific details about the validation result.",
+          "additionalProperties": true
+        },
+        "sample_records_checked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of records examined to produce this result."
+        }
+      }
+    },
+    "methods": {
+      "type": "object",
+      "description": "Per-method input schemas.",
+      "properties": {
+        "validate_record_count": {
+          "type": "object",
+          "description": "Compare source vs target record counts within a tolerance.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["job_id", "source_count", "target_count"],
+              "additionalProperties": false,
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Migration job identifier."
+                },
+                "source_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total record count from the source system."
+                },
+                "target_count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Total record count loaded into the target."
+                },
+                "tolerance": {
+                  "type": "number",
+                  "minimum": 0.0,
+                  "maximum": 1.0,
+                  "default": 0.001,
+                  "description": "Maximum fractional deviation (default 0.001 = 0.1%)."
+                }
+              }
+            }
+          }
+        },
+        "validate_required_fields": {
+          "type": "object",
+          "description": "Check null rates on required fields by querying the target DB.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["job_id"],
+              "additionalProperties": false,
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Migration job identifier."
+                },
+                "sample_size": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100000,
+                  "default": 1000,
+                  "description": "Number of records to sample from the target DB."
+                }
+              }
+            }
+          }
+        },
+        "validate_referential_integrity": {
+          "type": "object",
+          "description": "Check for orphaned foreign-key references in the target.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["job_id"],
+              "additionalProperties": false,
+              "properties": {
+                "job_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Migration job identifier."
+                }
+              }
+            }
+          }
+        },
+        "validate_sf_bulk_job": {
+          "type": "object",
+          "description": "Verify a Salesforce Bulk API v2 job result via the SF REST API.",
+          "properties": {
+            "input": {
+              "type": "object",
+              "required": ["bulk_job_id", "sf_api_url", "sf_token"],
+              "additionalProperties": false,
+              "properties": {
+                "bulk_job_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Salesforce Bulk API v2 job ID."
+                },
+                "sf_api_url": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "Salesforce instance URL (e.g. https://myorg.salesforce.com)."
+                },
+                "sf_token": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "OAuth access token. Must be obtained from a secrets manager at runtime — never hardcoded."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Runtime dependencies required by this tool.",
+      "properties": {
+        "python_packages": {
+          "type": "array",
+          "items": {"type": "string"},
+          "const": ["httpx", "sqlalchemy"]
+        },
+        "environment_variables": {
+          "type": "array",
+          "items": {"type": "string"},
+          "const": ["DATABASE_URL"]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,525 @@
+##############################################################################
+# security-scan.yml
+# Project : Legacy-to-Salesforce Migration Platform
+# Trigger : Daily schedule (02:00 UTC) + manual dispatch
+# Purpose : Comprehensive security scanning:
+#           SAST (Bandit, Semgrep, CodeQL)
+#           DAST (OWASP ZAP)
+#           Dependency audit (pip-audit, Safety, Dependabot)
+#           Secret scanning (GitLeaks, TruffleHog)
+#           Container scanning (Trivy, Grype)
+#           IaC scanning (Checkov, tfsec)
+#           License compliance (pip-licenses)
+##############################################################################
+
+name: Security Scan (Scheduled)
+
+on:
+  schedule:
+    - cron: "0 2 * * *"   # Daily at 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Scan type to run"
+        required: false
+        type: choice
+        options:
+          - all
+          - sast
+          - dast
+          - dependencies
+          - secrets
+          - containers
+          - iac
+        default: all
+      severity_threshold:
+        description: "Minimum severity to report (LOW|MEDIUM|HIGH|CRITICAL)"
+        required: false
+        type: choice
+        options:
+          - LOW
+          - MEDIUM
+          - HIGH
+          - CRITICAL
+        default: MEDIUM
+      fail_on_findings:
+        description: "Fail the pipeline if findings are found"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  SCAN_TYPE: ${{ github.event.inputs.scan_type || 'all' }}
+  SEVERITY_THRESHOLD: ${{ github.event.inputs.severity_threshold || 'MEDIUM' }}
+  FAIL_ON_FINDINGS: ${{ github.event.inputs.fail_on_findings || 'false' }}
+  PYTHON_VERSION: "3.12"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  id-token: write
+
+jobs:
+
+  ##############################################################################
+  # SAST — Static Application Security Testing
+  ##############################################################################
+  sast:
+    name: SAST Scanning
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "sast"]'), github.event.inputs.scan_type || 'all')
+    steps:
+      - name: Checkout (full history for accurate scanning)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # --- Bandit ---
+      - name: Install Bandit
+        run: pip install bandit[toml]==1.7.8
+
+      - name: Bandit SAST scan
+        run: |
+          bandit -r src/ \
+            --severity-level low \
+            --confidence-level low \
+            --format json \
+            -o bandit-results.json \
+            --exit-zero
+          bandit -r src/ \
+            --severity-level low \
+            --confidence-level low \
+            --format sarif \
+            -o bandit-results.sarif \
+            --exit-zero
+          echo "Bandit findings:"
+          cat bandit-results.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          metrics = data.get('metrics', {}).get('_totals', {})
+          print(f'  High: {metrics.get(\"SEVERITY.HIGH\", 0)}')
+          print(f'  Medium: {metrics.get(\"SEVERITY.MEDIUM\", 0)}')
+          print(f'  Low: {metrics.get(\"SEVERITY.LOW\", 0)}')
+          "
+
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-results.sarif
+          category: bandit-scheduled
+
+      # --- CodeQL ---
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended,security-and-quality
+
+      - name: Autobuild for CodeQL
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-python
+          upload: true
+
+      # --- Semgrep ---
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/secrets
+            p/owasp-top-ten
+            p/jwt
+            p/sql-injection
+            p/command-injection
+            p/xss
+            p/ssrf
+          generateSarif: "1"
+          publishDeployment: true
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-scheduled
+        if: always()
+
+      - name: Upload SAST artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sast-results
+          path: |
+            bandit-results.json
+            bandit-results.sarif
+          retention-days: 30
+
+  ##############################################################################
+  # Dependency vulnerability scanning
+  ##############################################################################
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "dependencies"]'), github.event.inputs.scan_type || 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt \
+                      -r requirements-api.txt \
+                      -r requirements-migration.txt
+
+      # pip-audit
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit==2.7.2
+          pip-audit \
+            --format json \
+            --output pip-audit-results.json \
+            --strict \
+            --progress-spinner off \
+            2>&1 || true
+          pip-audit \
+            --format cyclonedx-json \
+            --output pip-audit-sbom.json \
+            --progress-spinner off \
+            2>&1 || true
+        continue-on-error: true
+
+      # Safety check
+      - name: Run Safety check
+        run: |
+          pip install safety==3.1.0
+          safety check \
+            --json \
+            --output safety-results.json \
+            2>&1 || true
+        continue-on-error: true
+
+      # pip-licenses — license compliance
+      - name: Check license compliance
+        run: |
+          pip install pip-licenses==4.3.4
+          pip-licenses \
+            --format json \
+            --output-file pip-licenses.json \
+            --fail-on "GPL;AGPL;LGPL"
+        continue-on-error: true
+
+      - name: Upload dependency scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-results
+          path: |
+            pip-audit-results.json
+            pip-audit-sbom.json
+            safety-results.json
+            pip-licenses.json
+          retention-days: 30
+
+  ##############################################################################
+  # Secret scanning
+  ##############################################################################
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "secrets"]'), github.event.inputs.scan_type || 'all')
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # GitLeaks
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      # TruffleHog
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ""
+          head: HEAD
+          extra_args: >-
+            --debug
+            --only-verified
+            --json
+        continue-on-error: true
+
+      # detect-secrets
+      - name: Install detect-secrets
+        run: pip install detect-secrets==1.4.0
+
+      - name: Run detect-secrets
+        run: |
+          detect-secrets scan \
+            --baseline .secrets.baseline \
+            --exclude-files '(\.git|test|\.lock)' \
+            . 2>&1 | tee detect-secrets-results.txt || true
+        continue-on-error: true
+
+      - name: Upload secret scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: secret-scan-results
+          path: |
+            detect-secrets-results.txt
+          retention-days: 30
+
+  ##############################################################################
+  # Container image scanning
+  ##############################################################################
+  container-scan:
+    name: Container Image Scan
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "containers"]'), github.event.inputs.scan_type || 'all')
+    strategy:
+      matrix:
+        image:
+          - name: migration-worker
+            dockerfile: infrastructure/docker/Dockerfile.migration
+          - name: api-gateway
+            dockerfile: infrastructure/docker/Dockerfile.api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image.name }} for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:scan-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILD_VERSION=scan
+            GIT_COMMIT=${{ github.sha }}
+
+      # Trivy full scan
+      - name: Trivy vulnerability scan — ${{ matrix.image.name }}
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ matrix.image.name }}:scan-latest
+          format: sarif
+          output: trivy-${{ matrix.image.name }}.sarif
+          severity: ${{ env.SEVERITY_THRESHOLD }},CRITICAL
+          exit-code: "0"   # Don't fail — report only for scheduled scan
+          ignore-unfixed: false
+          vuln-type: os,library
+          scanners: vuln,secret,misconfig
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.image.name }}.sarif
+          category: trivy-${{ matrix.image.name }}-scheduled
+        if: always()
+
+      # Grype additional scan
+      - name: Grype vulnerability scan — ${{ matrix.image.name }}
+        uses: anchore/scan-action@v3
+        id: grype
+        with:
+          image: ${{ matrix.image.name }}:scan-latest
+          fail-build: "false"
+          severity-cutoff: ${{ env.SEVERITY_THRESHOLD }}
+          output-format: sarif
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-${{ matrix.image.name }}-scheduled
+        if: always()
+
+      - name: Upload container scan artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-scan-${{ matrix.image.name }}
+          path: |
+            trivy-${{ matrix.image.name }}.sarif
+          retention-days: 30
+
+  ##############################################################################
+  # IaC security scanning
+  ##############################################################################
+  iac-scan:
+    name: IaC Security Scan
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "iac"]'), github.event.inputs.scan_type || 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Checkov
+      - name: Checkov — Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-terraform.sarif
+          soft_fail: true
+          check: CKV_AZURE_*
+
+      - name: Checkov — Kubernetes
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/kubernetes/
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov-k8s.sarif
+          soft_fail: true
+
+      - name: Checkov — Dockerfile
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/docker/
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: true
+
+      # tfsec
+      - name: tfsec Terraform scan
+        uses: aquasecurity/tfsec-action@v1.0.0
+        with:
+          working_directory: infrastructure/terraform/
+          format: sarif
+          sarif_file: tfsec-results.sarif
+          soft_fail: true
+
+      - name: Upload IaC SARIF reports
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov-terraform.sarif
+          category: checkov-terraform-scheduled
+        if: always()
+
+      - name: Upload IaC scan artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iac-scan-results
+          path: |
+            checkov-terraform.sarif
+            checkov-k8s.sarif
+            checkov-docker.sarif
+            tfsec-results.sarif
+          retention-days: 30
+
+  ##############################################################################
+  # DAST — Dynamic Application Security Testing (staging only)
+  ##############################################################################
+  dast:
+    name: DAST — OWASP ZAP
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["all", "dast"]'), github.event.inputs.scan_type || 'all')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run OWASP ZAP API Scan
+        uses: zaproxy/action-api-scan@v0.7.0
+        with:
+          target: ${{ secrets.STAGING_API_URL }}/openapi.json
+          rules_file_name: .zap/rules.tsv
+          cmd_options: "-a"
+          fail_action: false
+          allow_issue_writing: true
+          issue_title: "ZAP Security Findings (Scheduled)"
+        env:
+          ZAP_AUTH_HEADER: Authorization
+          ZAP_AUTH_HEADER_VALUE: Bearer ${{ secrets.STAGING_SMOKE_TEST_TOKEN }}
+
+  ##############################################################################
+  # Consolidate and report
+  ##############################################################################
+  security-report:
+    name: Security Report
+    runs-on: ubuntu-latest
+    needs: [sast, dependency-scan, secret-scan, container-scan, iac-scan]
+    if: always()
+    steps:
+      - name: Download all scan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-scan-results/
+
+      - name: Generate consolidated security report
+        run: |
+          echo "# Security Scan Report" > security-report.md
+          echo "**Date:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> security-report.md
+          echo "**Trigger:** ${{ github.event_name }}" >> security-report.md
+          echo "**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> security-report.md
+          echo "" >> security-report.md
+          echo "## Job Results" >> security-report.md
+          echo "| Scan Type | Result |" >> security-report.md
+          echo "|-----------|--------|" >> security-report.md
+          echo "| SAST      | ${{ needs.sast.result }} |" >> security-report.md
+          echo "| Dependencies | ${{ needs.dependency-scan.result }} |" >> security-report.md
+          echo "| Secrets   | ${{ needs.secret-scan.result }} |" >> security-report.md
+          echo "| Containers | ${{ needs.container-scan.result }} |" >> security-report.md
+          echo "| IaC       | ${{ needs.iac-scan.result }} |" >> security-report.md
+
+      - name: Upload consolidated report
+        uses: actions/upload-artifact@v4
+        with:
+          name: consolidated-security-report
+          path: security-report.md
+          retention-days: 90
+
+      - name: Notify Slack with security summary
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":shield: *Daily Security Scan Completed*",
+              "attachments": [{
+                "color": "${{ (needs.sast.result == 'success' && needs.dependency-scan.result == 'success' && needs.secret-scan.result == 'success') && 'good' || 'warning' }}",
+                "fields": [
+                  { "title": "SAST", "value": "${{ needs.sast.result }}", "short": true },
+                  { "title": "Dependencies", "value": "${{ needs.dependency-scan.result }}", "short": true },
+                  { "title": "Secrets", "value": "${{ needs.secret-scan.result }}", "short": true },
+                  { "title": "Containers", "value": "${{ needs.container-scan.result }}", "short": true },
+                  { "title": "IaC", "value": "${{ needs.iac-scan.result }}", "short": true },
+                  { "title": "Report", "value": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "short": false }
+                ]
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_SECURITY_WEBHOOK }}

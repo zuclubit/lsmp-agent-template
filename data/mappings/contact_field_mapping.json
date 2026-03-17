@@ -1,0 +1,222 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0.0",
+  "description": "Complete field mapping from legacy ERP contact fields to Salesforce Contact fields.",
+  "source_object": "erp.contacts",
+  "target_object": "Contact",
+  "external_id_field": "Legacy_ID__c",
+  "upsert_key": "contact_id",
+  "account_lookup": {
+    "legacy_field": "acct_id",
+    "salesforce_field": "AccountId",
+    "lookup_via": "Account.Legacy_ID__c",
+    "notes": "Resolve the parent AccountId by querying Account WHERE Legacy_ID__c = acct_id. The Account MUST be migrated before its Contacts."
+  },
+  "fields": [
+    {
+      "legacy_field": "contact_id",
+      "salesforce_field": "Legacy_ID__c",
+      "transformation": "direct",
+      "required": true,
+      "is_external_id": true
+    },
+    {
+      "legacy_field": "acct_id",
+      "salesforce_field": "AccountId",
+      "transformation": "account_id_lookup",
+      "required": true,
+      "notes": "Look up the Salesforce Account ID using Account.Legacy_ID__c = acct_id."
+    },
+    {
+      "legacy_field": "salutation",
+      "salesforce_field": "Salutation",
+      "transformation": "direct",
+      "required": false,
+      "allowed_values": ["Mr.", "Ms.", "Mrs.", "Dr.", "Prof."],
+      "notes": "Pass through only if value is in Salesforce picklist. Strip if not recognised."
+    },
+    {
+      "legacy_field": "first_name",
+      "salesforce_field": "FirstName",
+      "transformation": "trim_title_case",
+      "required": true,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "middle_name",
+      "salesforce_field": "MiddleName",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 40,
+      "notes": "Only available if org has MiddleName enabled (Setup → User Interface)."
+    },
+    {
+      "legacy_field": "last_name",
+      "salesforce_field": "LastName",
+      "transformation": "trim_title_case",
+      "required": true,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "suffix",
+      "salesforce_field": "Suffix",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "title",
+      "salesforce_field": "Title",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 128
+    },
+    {
+      "legacy_field": "department",
+      "salesforce_field": "Department",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "work_email",
+      "salesforce_field": "Email",
+      "transformation": "lowercase_trim",
+      "required": false,
+      "max_length": 80,
+      "validation": "email_format",
+      "notes": "Map primary email to Salesforce Email field. Trim and lowercase."
+    },
+    {
+      "legacy_field": "work_phone",
+      "salesforce_field": "Phone",
+      "transformation": "format_phone_e164",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "mobile_phone",
+      "salesforce_field": "MobilePhone",
+      "transformation": "format_phone_e164",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "mail_addr_street",
+      "salesforce_field": "MailingStreet",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 255
+    },
+    {
+      "legacy_field": "mail_addr_city",
+      "salesforce_field": "MailingCity",
+      "transformation": "trim",
+      "required": false,
+      "max_length": 40
+    },
+    {
+      "legacy_field": "mail_addr_state",
+      "salesforce_field": "MailingState",
+      "transformation": "uppercase",
+      "required": false,
+      "max_length": 80
+    },
+    {
+      "legacy_field": "mail_addr_zip",
+      "salesforce_field": "MailingPostalCode",
+      "transformation": "direct",
+      "required": false,
+      "max_length": 20
+    },
+    {
+      "legacy_field": "mail_addr_country",
+      "salesforce_field": "MailingCountry",
+      "transformation": "iso2_to_name",
+      "required": false,
+      "max_length": 80,
+      "lookup_table": {
+        "US": "United States",
+        "CA": "Canada",
+        "GB": "United Kingdom",
+        "AU": "Australia",
+        "DE": "Germany",
+        "FR": "France"
+      },
+      "default_value": "United States"
+    },
+    {
+      "legacy_field": "do_not_call",
+      "salesforce_field": "DoNotCall",
+      "transformation": "boolean_cast",
+      "required": false,
+      "notes": "Cast 0/1/true/false/yes/no strings to boolean."
+    },
+    {
+      "legacy_field": "do_not_email",
+      "salesforce_field": "HasOptedOutOfEmail",
+      "transformation": "boolean_cast",
+      "required": false
+    },
+    {
+      "legacy_field": "lead_source",
+      "salesforce_field": "LeadSource",
+      "transformation": "lookup",
+      "required": false,
+      "lookup_table": {
+        "Web": "Web",
+        "Phone": "Phone Inquiry",
+        "Email": "Other",
+        "Referral": "Partner Referral",
+        "Advertising": "Purchased List",
+        "Partner": "Partner Referral",
+        "Trade Show": "Other",
+        "Word of Mouth": "Other"
+      },
+      "default_value": "Other"
+    },
+    {
+      "legacy_field": "contact_status",
+      "salesforce_field": null,
+      "transformation": "conditional_skip",
+      "condition": "Skip record if contact_status = 'I' (Inactive) and do_not_contact = true",
+      "notes": "Active (A) contacts are migrated. Inactive contacts migrate with HasOptedOutOfEmail = true."
+    },
+    {
+      "legacy_field": null,
+      "salesforce_field": "AccountSource",
+      "transformation": "constant",
+      "constant_value": "Data Migration"
+    },
+    {
+      "legacy_field": null,
+      "salesforce_field": "OwnerId",
+      "transformation": "env_variable",
+      "env_variable": "SF_MIGRATION_OWNER_ID",
+      "required": false
+    }
+  ],
+  "migration_order": {
+    "depends_on": ["Account"],
+    "notes": "Contacts must be migrated AFTER their parent Accounts. The migration pipeline enforces this by running Account load before Contact load."
+  },
+  "post_migration_validations": [
+    {
+      "check": "count_match",
+      "description": "Total migrated contacts should equal total legacy active contacts",
+      "tolerance_percent": 2.0
+    },
+    {
+      "check": "account_id_populated",
+      "description": "All migrated contacts must have a non-null AccountId"
+    },
+    {
+      "check": "no_null_last_name",
+      "description": "All migrated contacts must have a non-null LastName"
+    },
+    {
+      "check": "no_orphaned_contacts",
+      "description": "Every Contact.AccountId must reference a valid, migrated Account"
+    }
+  ]
+}

@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://s-agent.internal/skills/documentation/v2.0.0",
+  "title": "DocumentationSkill",
+  "description": "Generates and updates technical documentation from code, schemas, and API specs (v2.0.0)",
+  "version": "2.0.0",
+
+  "$defs": {
+    "SourceType": {
+      "type": "string",
+      "enum": ["code", "schema", "api", "text"],
+      "description": "What the source_content represents"
+    },
+    "DocType": {
+      "type": "string",
+      "enum": ["runbook", "api", "architecture", "adr", "agent_spec"],
+      "description": "Type of documentation to produce"
+    },
+    "OutputFormat": {
+      "type": "string",
+      "enum": ["markdown", "yaml"],
+      "description": "Format of the generated documentation"
+    },
+    "DocumentationInput": {
+      "type": "object",
+      "required": ["source_type", "source_content", "doc_type", "output_path"],
+      "additionalProperties": false,
+      "properties": {
+        "source_type": {
+          "$ref": "#/$defs/SourceType"
+        },
+        "source_content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 131072,
+          "description": "Raw content to generate documentation from (source code, JSON/YAML schema, OpenAPI fragment, or plain text description)"
+        },
+        "doc_type": {
+          "$ref": "#/$defs/DocType"
+        },
+        "output_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(docs/|monitoring/runbooks/|agents/)",
+          "description": "Relative path from repository root. Must begin with docs/, monitoring/runbooks/, or agents/. Path traversal (../) is rejected."
+        },
+        "title": {
+          "type": ["string", "null"],
+          "maxLength": 200,
+          "default": null,
+          "description": "Document title. Auto-derived from source_content if omitted."
+        }
+      }
+    },
+    "DocumentationOutput": {
+      "type": "object",
+      "required": ["content", "word_count", "sections", "output_path", "format"],
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generated documentation content in the appropriate format"
+        },
+        "word_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of words in the generated content"
+        },
+        "sections": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Top-level section headings in document order"
+        },
+        "output_path": {
+          "type": "string",
+          "description": "Validated, normalised output path"
+        },
+        "format": {
+          "$ref": "#/$defs/OutputFormat"
+        }
+      }
+    }
+  },
+
+  "type": "object",
+  "title": "DocumentationSkill Envelope",
+  "required": ["input", "output"],
+  "properties": {
+    "input": {
+      "$ref": "#/$defs/DocumentationInput",
+      "title": "DocumentationInput"
+    },
+    "output": {
+      "$ref": "#/$defs/DocumentationOutput",
+      "title": "DocumentationOutput"
+    }
+  },
+
+  "path_whitelist": {
+    "description": "Permitted output_path prefixes by doc_type",
+    "rules": [
+      { "doc_type": "runbook", "permitted_prefixes": ["monitoring/runbooks/"] },
+      { "doc_type": "api", "permitted_prefixes": ["docs/api/"] },
+      { "doc_type": "architecture", "permitted_prefixes": ["docs/architecture/"] },
+      { "doc_type": "adr", "permitted_prefixes": ["docs/adr/"] },
+      { "doc_type": "agent_spec", "permitted_prefixes": ["docs/agents/", "agents/"] }
+    ],
+    "always_rejected": [
+      "Path traversal sequences: ../",
+      "Absolute paths starting with /",
+      "Source directories: src/, migration/, tests/, agents/*.py"
+    ]
+  },
+
+  "doc_type_formats": {
+    "runbook": "markdown",
+    "api": "yaml",
+    "architecture": "markdown",
+    "adr": "markdown",
+    "agent_spec": "markdown"
+  },
+
+  "doc_type_templates": {
+    "runbook": [
+      "# Runbook: {title}",
+      "## Purpose",
+      "## Prerequisites",
+      "## When to Use This Runbook",
+      "## Step-by-Step Procedure",
+      "## Verification",
+      "## Rollback",
+      "## Escalation Path",
+      "## Related Alerts",
+      "## Last Updated"
+    ],
+    "architecture": [
+      "# Architecture: {component_name}",
+      "## Overview",
+      "## Responsibilities",
+      "## Design Decisions",
+      "## Component Interactions",
+      "## Data Flow",
+      "## Failure Modes",
+      "## Operational Considerations",
+      "## Related Documents"
+    ],
+    "adr": [
+      "# ADR-{number}: {decision_title}",
+      "## Status",
+      "## Context",
+      "## Decision",
+      "## Consequences",
+      "## Alternatives Considered",
+      "## References"
+    ],
+    "agent_spec": [
+      "# {Agent Name} Specification",
+      "## Purpose",
+      "## Input Schema",
+      "## Output Schema",
+      "## Tools",
+      "## Execution Workflow",
+      "## Environment Variables",
+      "## Example Invocations",
+      "## Limitations"
+    ]
+  },
+
+  "examples": [
+    {
+      "input": {
+        "source_type": "text",
+        "source_content": "The migration step net_timeout failure occurs when the database connection times out during extraction. Recovery requires increasing the timeout configuration and retrying the step with exponential backoff.",
+        "doc_type": "runbook",
+        "output_path": "monitoring/runbooks/net-timeout-recovery.md",
+        "title": "Network Timeout Recovery"
+      },
+      "output": {
+        "content": "# Runbook: Network Timeout Recovery\n\n## Purpose\n\nThis runbook covers recovery from `NET_TIMEOUT` failures in the migration extraction phase...\n",
+        "word_count": 342,
+        "sections": [
+          "Purpose",
+          "Prerequisites",
+          "When to Use This Runbook",
+          "Step-by-Step Procedure",
+          "Verification",
+          "Rollback",
+          "Escalation Path",
+          "Related Alerts",
+          "Last Updated"
+        ],
+        "output_path": "monitoring/runbooks/net-timeout-recovery.md",
+        "format": "markdown"
+      }
+    },
+    {
+      "input": {
+        "source_type": "schema",
+        "source_content": "{ \"$schema\": \"https://json-schema.org/draft/2020-12/schema\", \"title\": \"SecurityAgent\" ... }",
+        "doc_type": "api",
+        "output_path": "docs/api/security-agent.yaml",
+        "title": "Security Agent API Reference"
+      },
+      "output": {
+        "content": "openapi: 3.1.0\ninfo:\n  title: Security Agent API\n  version: 2.1.0\npaths:\n  /security/audit:\n    post:\n      summary: Run a security audit\n...\n",
+        "word_count": 289,
+        "sections": ["info", "paths", "components"],
+        "output_path": "docs/api/security-agent.yaml",
+        "format": "yaml"
+      }
+    }
+  ]
+}

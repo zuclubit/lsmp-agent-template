@@ -1,0 +1,552 @@
+---
+# RBAC Role Definitions — Legacy to Salesforce Migration
+# Applies to: Kubernetes (ClusterRole/Role) + Application-level RBAC
+# Version: 1.2.0
+# Last Updated: 2026-03-16
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rbac-role-definitions
+  namespace: migration-system
+  labels:
+    app.kubernetes.io/name: migration-rbac
+    app.kubernetes.io/version: "1.2.0"
+    security.company.com/policy-version: "SEC-POL-001"
+
+---
+# ============================================================
+# KUBERNETES CLUSTER ROLES
+# ============================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: migration-admin
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/tier: privileged
+  annotations:
+    description: "Full administrative access to migration resources"
+    owner: "platform-team@company.com"
+    review-date: "2026-06-16"
+rules:
+  # Core migration namespace management
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - pods/exec
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - configmaps
+      - secrets
+      - serviceaccounts
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Deployment management
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Batch job management
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RBAC management within namespace
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Network policies
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Custom resources
+  - apiGroups: ["migration.company.com"]
+    resources:
+      - migrationjobs
+      - migrationjobs/status
+      - migrationplans
+      - validationrules
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Metrics access
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: migration-operator
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/tier: operational
+  annotations:
+    description: "Day-to-day operations for migration pipelines — no delete/destroy"
+    owner: "migration-ops@company.com"
+    review-date: "2026-06-16"
+rules:
+  # Read and manage pods (restart via delete is allowed)
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Can delete pods (for restart purposes) but not secrets or configmaps
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  # Read persistent volume claims
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  # Deployment management — update only (no create/delete)
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - replicasets
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Job management — create and monitor (no delete)
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Custom migration resources — create and update
+  - apiGroups: ["migration.company.com"]
+    resources:
+      - migrationjobs
+      - migrationjobs/status
+      - migrationplans
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read-only on validation rules
+  - apiGroups: ["migration.company.com"]
+    resources: ["validationrules"]
+    verbs: ["get", "list", "watch"]
+  # Metrics
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: migration-viewer
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/tier: readonly
+  annotations:
+    description: "Read-only access for monitoring and reporting"
+    owner: "security@company.com"
+    review-date: "2026-06-16"
+rules:
+  # Read-only on all migration resources
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - configmaps
+      - events
+    verbs: ["get", "list", "watch"]
+  # No access to secrets
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["migration.company.com"]
+    resources:
+      - migrationjobs
+      - migrationjobs/status
+      - migrationplans
+      - validationrules
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: api-service
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/tier: service-account
+  annotations:
+    description: "Service account role for API service — scoped minimum permissions"
+    owner: "platform-team@company.com"
+    review-date: "2026-06-16"
+rules:
+  # API service only needs to read its own config
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["api-service-config", "feature-flags"]
+    verbs: ["get", "watch"]
+  # Read service endpoints for health checks
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list"]
+  # Create and monitor its own jobs
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create"]
+  # Read its own pod info
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  # Create migration job resources
+  - apiGroups: ["migration.company.com"]
+    resources:
+      - migrationjobs
+      - migrationjobs/status
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: audit-reader
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/tier: audit
+  annotations:
+    description: "Read-only access to audit logs and compliance reports for auditors"
+    owner: "compliance@company.com"
+    review-date: "2026-06-16"
+rules:
+  # Read audit configmaps (non-sensitive)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["audit-config", "compliance-reports"]
+    verbs: ["get", "list"]
+  # Read pod logs for audit purposes
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+    verbs: ["get", "list"]
+  # Read migration job history
+  - apiGroups: ["migration.company.com"]
+    resources:
+      - migrationjobs
+      - migrationjobs/status
+    verbs: ["get", "list", "watch"]
+  # NO access to secrets, no write access anywhere
+
+---
+# ============================================================
+# ROLE BINDINGS — Namespace scoped
+# ============================================================
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: migration-admin-binding
+  labels:
+    app.kubernetes.io/part-of: migration-system
+  annotations:
+    description: "Bind migration-admin role to admin service account and user group"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: migration-admin
+subjects:
+  - kind: ServiceAccount
+    name: migration-admin-sa
+    namespace: migration-system
+  - kind: Group
+    name: "migration-admins"
+    apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: migration-operator-binding
+  labels:
+    app.kubernetes.io/part-of: migration-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: migration-operator
+subjects:
+  - kind: ServiceAccount
+    name: migration-operator-sa
+    namespace: migration-system
+  - kind: Group
+    name: "migration-operators"
+    apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: migration-viewer-binding
+  labels:
+    app.kubernetes.io/part-of: migration-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: migration-viewer
+subjects:
+  - kind: Group
+    name: "migration-viewers"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: "developers"
+    apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: api-service-binding
+  labels:
+    app.kubernetes.io/part-of: migration-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: api-service
+subjects:
+  - kind: ServiceAccount
+    name: api-service-sa
+    namespace: migration-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: audit-reader-binding
+  labels:
+    app.kubernetes.io/part-of: migration-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: audit-reader
+subjects:
+  - kind: Group
+    name: "external-auditors"
+    apiGroup: rbac.authorization.k8s.io
+  - kind: ServiceAccount
+    name: audit-service-sa
+    namespace: migration-system
+
+---
+# ============================================================
+# SERVICE ACCOUNTS
+# ============================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: migration-admin-sa
+  namespace: migration-system
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/role: migration-admin
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/migration-admin-irsa"
+    azure.workload.identity/client-id: "AZURE_CLIENT_ID_ADMIN"
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: migration-operator-sa
+  namespace: migration-system
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/role: migration-operator
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/migration-operator-irsa"
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-service-sa
+  namespace: migration-system
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/role: api-service
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::ACCOUNT_ID:role/api-service-irsa"
+automountServiceAccountToken: false
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: audit-service-sa
+  namespace: migration-system
+  labels:
+    app.kubernetes.io/part-of: migration-system
+    rbac.company.com/role: audit-reader
+automountServiceAccountToken: false
+
+---
+# ============================================================
+# APPLICATION-LEVEL RBAC DEFINITIONS
+# Used by rbac_config.py for API authorization
+# ============================================================
+
+application_rbac:
+  version: "1.2.0"
+
+  permissions:
+    # Migration Job permissions
+    - name: migration:jobs:read
+      description: View migration jobs and their status
+    - name: migration:jobs:create
+      description: Create new migration jobs
+    - name: migration:jobs:update
+      description: Update migration job configuration
+    - name: migration:jobs:delete
+      description: Delete migration jobs
+    - name: migration:jobs:execute
+      description: Start/stop/pause migration jobs
+    - name: migration:jobs:approve
+      description: Approve migration jobs for production execution
+
+    # Data permissions
+    - name: data:read:confidential
+      description: Read confidential data records
+    - name: data:read:restricted
+      description: Read restricted data records (requires justification)
+    - name: data:export
+      description: Export data from migration system
+    - name: data:transform:configure
+      description: Configure transformation rules
+
+    # Configuration permissions
+    - name: config:read
+      description: Read system configuration
+    - name: config:write
+      description: Modify system configuration
+    - name: config:secrets:read
+      description: Read secret references (not values)
+
+    # Monitoring permissions
+    - name: monitoring:metrics:read
+      description: View metrics and dashboards
+    - name: monitoring:logs:read
+      description: View application logs
+    - name: monitoring:alerts:manage
+      description: Create and manage alert rules
+
+    # Audit permissions
+    - name: audit:logs:read
+      description: Read audit logs
+    - name: audit:reports:generate
+      description: Generate compliance reports
+
+    # Admin permissions
+    - name: admin:users:manage
+      description: Manage user roles and permissions
+    - name: admin:system:manage
+      description: System administration
+
+  roles:
+    migration-admin:
+      description: "Full system administrator for migration platform"
+      permissions:
+        - "migration:jobs:*"
+        - "data:read:confidential"
+        - "data:read:restricted"
+        - "data:export"
+        - "data:transform:configure"
+        - "config:read"
+        - "config:write"
+        - "config:secrets:read"
+        - "monitoring:metrics:read"
+        - "monitoring:logs:read"
+        - "monitoring:alerts:manage"
+        - "audit:logs:read"
+        - "audit:reports:generate"
+        - "admin:users:manage"
+        - "admin:system:manage"
+      require_mfa: true
+      session_timeout_minutes: 60
+      require_justification_for:
+        - "data:read:restricted"
+        - "data:export"
+
+    migration-operator:
+      description: "Day-to-day migration operations"
+      permissions:
+        - "migration:jobs:read"
+        - "migration:jobs:create"
+        - "migration:jobs:update"
+        - "migration:jobs:execute"
+        - "data:read:confidential"
+        - "data:transform:configure"
+        - "config:read"
+        - "monitoring:metrics:read"
+        - "monitoring:logs:read"
+      require_mfa: true
+      session_timeout_minutes: 480
+      require_justification_for: []
+
+    migration-viewer:
+      description: "Read-only monitoring and status viewing"
+      permissions:
+        - "migration:jobs:read"
+        - "config:read"
+        - "monitoring:metrics:read"
+        - "monitoring:logs:read"
+      require_mfa: false
+      session_timeout_minutes: 480
+      require_justification_for: []
+
+    api-service:
+      description: "Service-to-service API role"
+      permissions:
+        - "migration:jobs:read"
+        - "migration:jobs:create"
+        - "migration:jobs:update"
+        - "data:read:confidential"
+        - "config:read"
+      require_mfa: false
+      session_timeout_minutes: -1  # Service accounts don't expire
+      require_justification_for: []
+      is_service_account: true
+
+    audit-reader:
+      description: "External auditor read-only access"
+      permissions:
+        - "migration:jobs:read"
+        - "audit:logs:read"
+        - "audit:reports:generate"
+        - "monitoring:metrics:read"
+      require_mfa: true
+      session_timeout_minutes: 240
+      require_justification_for: []
+      access_window:
+        type: "time_limited"
+        max_duration_days: 30

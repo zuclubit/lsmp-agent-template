@@ -1,0 +1,163 @@
+# Skills Configuration — Migration Platform (2026)
+# Defines behavioral rules and constraints for each agent skill.
+# Skills are invoked by agents when their task matches a skill type.
+
+skills:
+  code-generation:
+    version: 2.0.0
+    description: "Generate Python, YAML, and JSON code for migration platform"
+    allowed_languages:
+      - python
+      - yaml
+      - json
+    forbidden_patterns:
+      - exec
+      - eval
+      - __import__
+      - subprocess.call
+      - os.system
+      - compile(
+    output_path_whitelist:
+      - src/
+      - migration/
+      - agents/
+      - tools/
+      - context-servers/
+    requires_review_for:
+      - database migration scripts
+      - Salesforce bulk operations
+      - Kafka producer configuration
+    audit_logging: true
+
+  validation:
+    version: 2.0.0
+    description: "Execute three-gate data quality validation against real systems"
+    real_db_queries: true
+    real_sf_api_calls: true
+    real_kafka_metrics: true
+    stub_data_allowed: false
+    random_data_allowed: false
+    gates:
+      gate1:
+        name: source_completeness
+        blocking: true
+        min_record_count: 1
+        null_rate_threshold: 0.05
+      gate2:
+        name: target_validity
+        blocking: true
+        api_budget_multiplier: 1.2
+      gate3:
+        name: post_load_sample
+        blocking: true
+        sample_size: 500
+        max_discrepancy_rate: 0.001
+    tools_required:
+      - validation-tool
+    fail_fast: true
+    write_gate_reports: true
+
+  migration-execution:
+    version: 2.0.0
+    description: "Execute data migration in chunks via Kafka pipeline"
+    requires_security_clearance: true
+    requires_validation_gates: [gate1, gate2]
+    chunk_size_default: 1000
+    max_chunk_size: 10000
+    dlq_threshold: 100
+    error_rate_abort_threshold: 0.01
+    idempotency_required: true
+    rollback_on_failure: true
+    audit_logging: required
+
+  debugging:
+    version: 2.0.0
+    description: "Diagnose migration failures and produce RCA reports"
+    read_only: true
+    tools:
+      - api-client-tool
+      - file-system-tool
+      - validation-tool
+    diagnostic_sources:
+      - migration_api_logs
+      - kafka_dlq
+      - salesforce_bulk_api_errors
+      - postgresql_error_log
+    auto_recovery_confidence_threshold: 0.85
+    escalate_if_confidence_below: 0.6
+    runbook_lookup_enabled: true
+
+  documentation:
+    version: 2.0.0
+    description: "Look up runbooks, architecture docs, and operational procedures"
+    output_path_whitelist:
+      - docs/
+      - monitoring/runbooks/
+      - architecture/decisions/
+    no_writes_to:
+      - src/
+      - agents/
+      - migration/
+      - tools/
+      - context-servers/
+    search_strategy: keyword_tfidf
+    max_results: 5
+    index_ttl_seconds: 3600
+
+  security-audit:
+    version: 2.0.0
+    description: "Run four-phase security audit on migration code and configuration"
+    checks:
+      - secrets_scan
+      - dependency_audit
+      - api_security
+      - soql_injection_check
+      - path_traversal
+      - pii_exposure
+      - privilege_escalation
+    severity_handling:
+      CRITICAL: BLOCK_IMMEDIATELY
+      HIGH: ACCUMULATE_BLOCK_AT_3
+      MEDIUM: REPORT_ONLY
+      LOW: LOG_ONLY
+    block_on_critical: true
+    entropy_threshold: 4.5
+    allowed_soql_statements: [SELECT]
+    cve_data_source: osv.dev
+    auto_fail_on_leaked_secrets: true
+
+  orchestration:
+    version: 2.0.0
+    description: "Plan and coordinate multi-phase migration workflows"
+    planning:
+      max_chunks: 10000
+      risk_classification:
+        LOW: "< 10K records, known schema"
+        MEDIUM: "10K-1M records or schema changes"
+        HIGH: "> 1M records or breaking schema changes"
+    gate_enforcement: strict
+    parallel_agent_limit: 3
+    human_approval_operations:
+      - HIGH_RISK_EXECUTION
+      - ROLLBACK
+      - OVERRIDE_GATE
+      - FORCE_DELETE
+
+  testing:
+    version: 2.0.0
+    description: "Generate and run tests for migration platform components"
+    test_types:
+      - unit
+      - integration
+      - contract
+      - migration_validation
+    framework: pytest
+    async_support: true
+    min_coverage_target: 80
+    fixtures_allowed: true
+    mock_external_apis: true
+    mock_databases: true
+    never_mock:
+      - gate_logic
+      - soql_safety_checks
+      - secret_access_control

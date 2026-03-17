@@ -1,0 +1,262 @@
+/*
+ * Migration Dashboard — Component Stylesheet
+ * Uses SLDS design tokens via CSS custom properties for theme compatibility.
+ * Author  : Migration Platform Team
+ * Modified: 2026-03-16
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOADING OVERLAY
+══════════════════════════════════════════════════════════════════════════ */
+.loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    border-radius: var(--lwc-borderRadiusMedium, 0.25rem);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GLOBAL ALERT BANNER
+══════════════════════════════════════════════════════════════════════════ */
+.migration-alert {
+    position: relative;
+    border-radius: var(--lwc-borderRadiusMedium, 0.25rem);
+    margin-bottom: var(--lwc-spacingMedium, 1rem);
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   KPI CARDS
+══════════════════════════════════════════════════════════════════════════ */
+.kpi-card {
+    border-radius: var(--lwc-borderRadiusMedium, 0.25rem);
+    box-shadow: var(--lwc-shadowMedium, 0 2px 8px rgba(0,0,0,0.12));
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    overflow: hidden;
+}
+
+.kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--lwc-shadowHeavy, 0 4px 16px rgba(0,0,0,0.18));
+}
+
+.kpi-card--total {
+    border-top: 4px solid var(--lwc-colorBrand, #0176d3);
+}
+.kpi-card--success {
+    border-top: 4px solid var(--lwc-colorTextSuccess, #2e844a);
+}
+.kpi-card--error {
+    border-top: 4px solid var(--lwc-colorTextError, #ba0517);
+}
+.kpi-card--pending {
+    border-top: 4px solid var(--lwc-colorTextWarning, #dd7a01);
+}
+
+.kpi-label {
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    font-weight: var(--lwc-fontWeightBold, 700);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--lwc-colorTextWeak, #706e6b);
+}
+
+.kpi-value {
+    font-size: 2.5rem;
+    font-weight: var(--lwc-fontWeightBold, 700);
+    line-height: 1;
+    color: var(--lwc-colorTextDefault, #181818);
+    margin: var(--lwc-spacingSmall, 0.5rem) 0 var(--lwc-spacingXxSmall, 0.25rem);
+}
+
+.kpi-value--success { color: var(--lwc-colorTextSuccess, #2e844a); }
+.kpi-value--error   { color: var(--lwc-colorTextError,   #ba0517); }
+.kpi-value--pending { color: var(--lwc-colorTextWarning, #dd7a01); }
+
+.kpi-sublabel {
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    color: var(--lwc-colorTextWeak, #706e6b);
+}
+
+.kpi-icon {
+    --lwc-colorBrand: var(--lwc-colorBrandAccessible, #0176d3);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PROGRESS SECTION
+══════════════════════════════════════════════════════════════════════════ */
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: var(--lwc-spacingXSmall, 0.5rem);
+}
+
+.progress-label {
+    font-weight: var(--lwc-fontWeightBold, 700);
+    font-size: var(--lwc-fontSize4, 1rem);
+    color: var(--lwc-colorTextDefault, #181818);
+}
+
+.progress-estimate {
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    color: var(--lwc-colorTextWeak, #706e6b);
+    font-style: italic;
+}
+
+.progress-legend {
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    color: var(--lwc-colorTextDefault, #181818);
+    flex-wrap: wrap;
+    gap: var(--lwc-spacingSmall, 0.5rem);
+}
+
+.legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+.legend-dot--success     { background: var(--lwc-colorTextSuccess, #2e844a); }
+.legend-dot--in-progress { background: var(--lwc-colorBrand, #0176d3); }
+.legend-dot--error       { background: var(--lwc-colorTextError,   #ba0517); }
+.legend-dot--pending     { background: var(--lwc-colorTextWarning, #dd7a01); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OBJECT BREAKDOWN ROWS
+══════════════════════════════════════════════════════════════════════════ */
+.object-row {
+    padding: var(--lwc-spacingXSmall, 0.5rem) 0;
+    border-bottom: 1px solid var(--lwc-colorBorderSeparator, #e5e5e5);
+}
+
+.object-row:last-child {
+    border-bottom: none;
+}
+
+.object-label {
+    font-weight: var(--lwc-fontWeightBold, 700);
+    font-size: var(--lwc-fontSize3, 0.875rem);
+    color: var(--lwc-colorTextDefault, #181818);
+}
+
+.object-count {
+    font-size: var(--lwc-fontSize3, 0.875rem);
+    color: var(--lwc-colorTextWeak, #706e6b);
+}
+
+.object-sub {
+    margin-top: var(--lwc-spacingXxSmall, 0.25rem);
+    display: flex;
+    gap: var(--lwc-spacingXSmall, 0.5rem);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STATUS BADGES
+══════════════════════════════════════════════════════════════════════════ */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--lwc-spacingXxSmall, 0.25rem);
+    border-radius: 2px;
+    font-size: var(--lwc-fontSize1, 0.625rem);
+    font-weight: var(--lwc-fontWeightBold, 700);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.badge--success {
+    background: #eaf4ee;
+    color: var(--lwc-colorTextSuccess, #2e844a);
+    border: 1px solid #a8d5b5;
+}
+
+.badge--error {
+    background: #fef1ee;
+    color: var(--lwc-colorTextError, #ba0517);
+    border: 1px solid #f5c0b8;
+}
+
+.error-badge {
+    --sds-c-badge-color-background: var(--lwc-colorTextError, #ba0517);
+    --sds-c-badge-text-color: #fff;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BATCH RUN HISTORY
+══════════════════════════════════════════════════════════════════════════ */
+.batch-run-row {
+    padding: var(--lwc-spacingXSmall, 0.5rem) 0;
+    border-bottom: 1px solid var(--lwc-colorBorderSeparator, #e5e5e5);
+}
+
+.batch-run-row:last-child {
+    border-bottom: none;
+}
+
+.batch-run-label {
+    font-size: var(--lwc-fontSize3, 0.875rem);
+    font-weight: var(--lwc-fontWeightBold, 700);
+    color: var(--lwc-colorTextDefault, #181818);
+    margin: 0;
+}
+
+.batch-run-meta {
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    color: var(--lwc-colorTextWeak, #706e6b);
+    margin: 2px 0 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   NO-ERRORS STATE
+══════════════════════════════════════════════════════════════════════════ */
+.no-errors-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: var(--lwc-spacingXLarge, 2rem);
+    gap: var(--lwc-spacingSmall, 0.5rem);
+    text-align: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REFRESH FOOTER
+══════════════════════════════════════════════════════════════════════════ */
+.refresh-footer {
+    display: flex;
+    align-items: center;
+    font-size: var(--lwc-fontSize2, 0.75rem);
+    color: var(--lwc-colorTextWeak, #706e6b);
+    padding-top: var(--lwc-spacingSmall, 0.5rem);
+    border-top: 1px solid var(--lwc-colorBorderSeparator, #e5e5e5);
+    margin-top: var(--lwc-spacingSmall, 0.5rem);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE ADJUSTMENTS
+══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+    .kpi-value {
+        font-size: 1.75rem;
+    }
+    .progress-header {
+        flex-direction: column;
+        gap: var(--lwc-spacingXxSmall, 0.25rem);
+    }
+    .refresh-footer {
+        flex-wrap: wrap;
+        gap: var(--lwc-spacingXxSmall, 0.25rem);
+    }
+}

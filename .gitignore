@@ -1,0 +1,151 @@
+# =============================================================================
+# Legacy-to-Salesforce Migration Platform — .gitignore
+# IMPORTANT: Never commit real migration data, credentials, or PII
+# =============================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+dist/
+build/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+.env.bak
+
+# Environment & secrets — NEVER commit these
+.env
+.env.local
+.env.*.local
+.env.production
+secrets.yaml
+secrets.json
+*.pem
+*.key
+*.p12
+*.pfx
+vault_token
+.vault-token
+kubeconfig
+*.kubeconfig
+*_credentials.json
+service_account.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+junit*.xml
+test-results/
+
+# Halcon runtime sessions — contain agent traces, not source
+.halcon/retrospectives/*.jsonl
+!.halcon/retrospectives/.gitkeep
+
+# Migration data — NEVER commit real customer data
+/data/raw/
+/data/processed/
+/data/exports/
+/data/dumps/
+*.parquet
+*.avro
+*.orc
+# Keep sample fixture files
+!tests/fixtures/*.json
+!tests/fixtures/*.csv
+!tests/fixtures/.gitkeep
+
+# Logs
+*.log
+*.log.*
+logs/
+!monitoring/runbooks/
+
+# Salesforce CLI
+.sfdx/
+.sf/
+force-app/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.lock.info
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Docker
+.docker/
+
+# Checkpoints — runtime state, not source
+checkpoints/
+*.checkpoint
+
+# Temporary transformation output
+/data/transformed/
+/tmp/migration-work/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# mypy / pyright
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyright/
+
+# =============================================================================
+# Agent Runtime
+# =============================================================================
+.agent_cache/
+agent_sessions/
+*.agent_state
+
+# =============================================================================
+# Additional secrets patterns
+# =============================================================================
+*.crt
+*.cer
+secrets.yml
+vault-token
+service-account-key.json
+*_serviceaccount.json
+
+# =============================================================================
+# Keep placeholders — empty directories that must exist in the repo
+# =============================================================================
+!.halcon/retrospectives/.gitkeep
+!tests/fixtures/.gitkeep

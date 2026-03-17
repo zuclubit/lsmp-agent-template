@@ -1,0 +1,78 @@
+{
+  "server_id": "runtime-context",
+  "version": "2.0.0",
+  "description": "Real-time operational metrics context server for migration platform agents",
+
+  "transport": {
+    "type": "stdio",
+    "encoding": "utf-8"
+  },
+
+  "upstream_apis": {
+    "migration_api": {
+      "base_url": "${MIGRATION_API_BASE}",
+      "auth": {
+        "type": "bearer",
+        "token_source": "env:SERVICE_TOKEN"
+      },
+      "timeout_seconds": 10,
+      "max_retries": 2
+    },
+    "kafka_metrics_api": {
+      "base_url": "${KAFKA_METRICS_API}",
+      "auth": {
+        "type": "none"
+      },
+      "timeout_seconds": 5,
+      "max_retries": 1
+    },
+    "spire_agent_api": {
+      "base_url": "${SPIRE_API_BASE}",
+      "auth": {
+        "type": "spiffe_svid",
+        "socket_path": "${SPIRE_AGENT_SOCKET}"
+      },
+      "timeout_seconds": 5,
+      "max_retries": 1
+    }
+  },
+
+  "caching": {
+    "enabled": false,
+    "note": "Runtime context is always fetched live — no caching to avoid stale operational data"
+  },
+
+  "thresholds": {
+    "kafka_lag_warn": 1000,
+    "kafka_lag_critical": 10000,
+    "dlq_depth_warn": 10,
+    "dlq_depth_critical": 100,
+    "salesforce_api_usage_warn_pct": 70,
+    "salesforce_api_usage_critical_pct": 90,
+    "spire_rotation_threshold_seconds": 3600,
+    "job_stall_threshold_seconds": 300
+  },
+
+  "concurrent_fetch": {
+    "enabled": true,
+    "max_concurrent_requests": 5,
+    "snapshot_parallelism": true
+  },
+
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_trace_id": true,
+    "redact_fields": ["access_token", "sf_access_token", "instance_url"]
+  },
+
+  "health": {
+    "enabled": true,
+    "check_interval_seconds": 15,
+    "upstream_dependencies": [
+      "migration_api",
+      "kafka_metrics_api",
+      "spire_agent_api"
+    ]
+  }
+}

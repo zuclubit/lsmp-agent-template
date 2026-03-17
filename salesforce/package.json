@@ -1,0 +1,98 @@
+{
+  "$schema": "http://forcedotcom.github.io/salesforcedx-vscode/assets/schemas/sfdx-project.schema.json",
+  "packageDirectories": [
+    {
+      "path": "force-app",
+      "default": true,
+      "package": "Legacy-SF-Migration",
+      "versionName": "ver 1.0",
+      "versionNumber": "1.0.0.NEXT",
+      "versionDescription": "Initial migration package — Account, Contact, MigrationLog objects, batch processors, REST connectors, LWC dashboard",
+      "releaseNotesUrl": "https://github.com/your-org/s-agent/releases/v1.0",
+      "definitionFile": "config/project-scratch-def.json",
+      "ancestorId": "04t000000000000",
+      "dependencies": []
+    }
+  ],
+  "name": "legacy-sf-migration",
+  "namespace": "",
+  "sfdcLoginUrl": "https://login.salesforce.com",
+  "sourceApiVersion": "59.0",
+  "plugins": {
+    "salesforcedx-vscode-apex": {
+      "java.home": "",
+      "enable-semantic-errors": true
+    }
+  },
+  "signupTargetLoginUrl": "https://login.salesforce.com",
+  "features": [
+    "EnableSetPasswordInApi",
+    "ContentWorkspaces",
+    "ChatterMessaging",
+    "NetworksEnabled"
+  ],
+  "settings": {
+    "lightningExperienceSettings": {
+      "enableS1DesktopEnabled": true
+    },
+    "mobileSettings": {
+      "enableS1EncryptedStoragePref2": false
+    },
+    "orgPreferenceSettings": {
+      "translation": true,
+      "isCascadeActivateToRelatedPricesEnabled": true,
+      "isStaticResourceCachingEnabled": true
+    }
+  },
+  "orgsMap": {
+    "production": {
+      "instanceUrl": "https://mycompany.my.salesforce.com",
+      "username": "deploy@mycompany.com",
+      "notes": "Production org — requires change-set approval"
+    },
+    "staging": {
+      "instanceUrl": "https://mycompany--staging.sandbox.my.salesforce.com",
+      "username": "deploy@mycompany.com.staging",
+      "notes": "Staging sandbox — used for UAT"
+    },
+    "dev": {
+      "instanceUrl": "https://mycompany--dev.sandbox.my.salesforce.com",
+      "username": "deploy@mycompany.com.dev",
+      "notes": "Developer sandbox"
+    }
+  },
+  "scripts": {
+    "deploy:dev": "sfdx force:source:push -u dev",
+    "deploy:staging": "sfdx force:source:deploy -p force-app -u staging --checkonly false",
+    "deploy:prod": "sfdx force:source:deploy -p force-app -u production --testlevel RunAllTestsInOrg",
+    "test": "sfdx force:apex:test:run --synchronous --resultformat human --codecoverage",
+    "test:json": "sfdx force:apex:test:run --synchronous --resultformat json --codecoverage --outputdir coverage",
+    "lint": "eslint force-app/main/default/lwc --ext .js",
+    "scratch:create": "sfdx force:org:create -f config/project-scratch-def.json -a migration-scratch -d 30",
+    "scratch:push": "sfdx force:source:push -u migration-scratch",
+    "scratch:open": "sfdx force:org:open -u migration-scratch",
+    "retrieve:prod": "sfdx force:source:retrieve -p force-app -u production",
+    "validate:staging": "sfdx force:source:deploy -p force-app -u staging --checkonly --testlevel RunLocalTests"
+  },
+  "metadata": {
+    "sourceComponents": [
+      "ApexClass",
+      "ApexTrigger",
+      "LightningComponentBundle",
+      "CustomObject",
+      "CustomField",
+      "Profile",
+      "PermissionSet",
+      "CustomPermission",
+      "NamedCredential",
+      "RemoteSiteSetting",
+      "FlexiPage",
+      "Layout",
+      "ListView",
+      "CustomTab",
+      "CustomApplication",
+      "StaticResource",
+      "EmailTemplate"
+    ]
+  }
+}

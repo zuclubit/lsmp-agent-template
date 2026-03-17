@@ -1,0 +1,400 @@
+---
+# Prometheus AlertManager Alert Rules
+# Legacy to Salesforce Migration Platform
+# Version: 1.1.0
+# Last Updated: 2026-03-16
+
+groups:
+
+  # ============================================================
+  # MIGRATION JOB ALERTS
+  # ============================================================
+
+  - name: migration_job_alerts
+    interval: 1m
+    rules:
+
+      - alert: MigrationJobFailed
+        expr: |
+          increase(migration_jobs_total{status="failed"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/migration-job-failed"
+        annotations:
+          summary: "Migration job has failed"
+          description: >
+            Migration job(s) failed in environment {{ $labels.environment }}
+            for object {{ $labels.source_object }}.
+            Count: {{ $value }} failures in the last 5 minutes.
+
+      - alert: MigrationJobStuck
+        expr: |
+          migration_jobs_active > 0
+          and
+          increase(migration_records_processed_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/migration-job-stuck"
+        annotations:
+          summary: "Active migration job has made no progress for 10 minutes"
+          description: >
+            Migration job in environment {{ $labels.environment }},
+            phase {{ $labels.phase }} has been active but processed 0 records
+            in the last 10 minutes. Possible deadlock or external API outage.
+
+      - alert: MigrationHighErrorRate
+        expr: |
+          (
+            rate(migration_errors_total[5m])
+            /
+            rate(migration_records_processed_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/migration-high-error-rate"
+        annotations:
+          summary: "Migration error rate exceeds 5%"
+          description: >
+            Error rate for {{ $labels.source_object }} in {{ $labels.environment }}
+            is {{ printf "%.1f" (mul $value 100) }}% (threshold: 5%).
+            Phase: {{ $labels.phase }}, Error type: {{ $labels.error_type }}.
+
+      - alert: MigrationErrorRateWarning
+        expr: |
+          (
+            rate(migration_errors_total[5m])
+            /
+            rate(migration_records_processed_total[5m])
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: migration
+        annotations:
+          summary: "Migration error rate exceeds 1%"
+          description: >
+            Error rate for {{ $labels.source_object }} in {{ $labels.environment }}
+            is {{ printf "%.1f" (mul $value 100) }}% (threshold: 1%).
+
+      - alert: MigrationSLABreach
+        expr: |
+          migration_jobs_duration_seconds_bucket{le="86400", status="running"}
+          / ignoring(le)
+          migration_jobs_duration_seconds_count{status="running"} < 0.95
+        for: 0m
+        labels:
+          severity: critical
+          team: migration
+          sla: "24h"
+          runbook: "https://wiki.company.com/runbooks/migration-sla-breach"
+        annotations:
+          summary: "Migration SLA breach: less than 95% of jobs completing within 24h"
+          description: >
+            Less than 95% of migration jobs for {{ $labels.source_object }}
+            in {{ $labels.environment }} are completing within the 24-hour SLA.
+            Immediate investigation required.
+
+      - alert: MigrationDeadLetterQueueGrowing
+        expr: |
+          migration_dead_letter_queue_size > 100
+        for: 5m
+        labels:
+          severity: warning
+          team: migration
+        annotations:
+          summary: "Dead-letter queue has more than 100 records"
+          description: >
+            Dead-letter queue for {{ $labels.source_object }} in {{ $labels.environment }}
+            has {{ $value }} failed records requiring manual intervention.
+
+      - alert: MigrationDeadLetterQueueCritical
+        expr: |
+          migration_dead_letter_queue_size > 1000
+        for: 0m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/dlq-critical"
+        annotations:
+          summary: "Dead-letter queue exceeds 1000 records — immediate action required"
+          description: >
+            Dead-letter queue for {{ $labels.source_object }} in {{ $labels.environment }}
+            has {{ $value }} records. Migration may be partially failed.
+
+      - alert: MigrationThroughputDrop
+        expr: |
+          (
+            migration_records_per_second
+            < (
+              avg_over_time(migration_records_per_second[30m] offset 1h) * 0.5
+            )
+          ) and migration_records_per_second > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: migration
+        annotations:
+          summary: "Migration throughput has dropped more than 50%"
+          description: >
+            Throughput for {{ $labels.source_object }} in {{ $labels.environment }}
+            is {{ printf "%.1f" $value }} rec/s, which is less than 50% of the
+            recent average.
+
+  # ============================================================
+  # SALESFORCE API ALERTS
+  # ============================================================
+
+  - name: salesforce_api_alerts
+    interval: 1m
+    rules:
+
+      - alert: SalesforceAPIRateLimitWarning
+        expr: |
+          salesforce_api_rate_limit_remaining < 1000
+        for: 0m
+        labels:
+          severity: warning
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/sf-rate-limit"
+        annotations:
+          summary: "Salesforce API rate limit approaching"
+          description: >
+            Remaining Salesforce API calls for org {{ $labels.org_id }}
+            in {{ $labels.environment }}: {{ $value }} (threshold: 1000).
+            Consider pausing non-critical migration jobs.
+
+      - alert: SalesforceAPIRateLimitCritical
+        expr: |
+          salesforce_api_rate_limit_remaining < 100
+        for: 0m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/sf-rate-limit-critical"
+        annotations:
+          summary: "Salesforce API rate limit critically low"
+          description: >
+            Only {{ $value }} Salesforce API calls remaining for org
+            {{ $labels.org_id }}. PAUSE ALL MIGRATION JOBS IMMEDIATELY.
+
+      - alert: SalesforceAPIHighLatency
+        expr: |
+          histogram_quantile(0.95, rate(salesforce_api_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: migration
+        annotations:
+          summary: "Salesforce API p95 latency exceeds 10 seconds"
+          description: >
+            95th percentile Salesforce API latency is
+            {{ printf "%.1f" $value }}s for {{ $labels.api_type }}/{{ $labels.object_name }}
+            in {{ $labels.environment }}. Check Salesforce Trust status.
+
+      - alert: SalesforceAPIErrorSpike
+        expr: |
+          rate(salesforce_api_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: migration
+          runbook: "https://wiki.company.com/runbooks/sf-api-errors"
+        annotations:
+          summary: "Salesforce API error rate spike"
+          description: >
+            Salesforce API returning {{ printf "%.1f" $value }} errors/second
+            for {{ $labels.error_code }}/{{ $labels.object_name }}
+            in {{ $labels.environment }}.
+
+  # ============================================================
+  # SYSTEM HEALTH ALERTS
+  # ============================================================
+
+  - name: system_health_alerts
+    interval: 30s
+    rules:
+
+      - alert: ComponentUnhealthy
+        expr: |
+          component_health == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          runbook: "https://wiki.company.com/runbooks/component-unhealthy"
+        annotations:
+          summary: "Component {{ $labels.component }} is unhealthy"
+          description: >
+            Component {{ $labels.component }} in {{ $labels.environment }}
+            has been reporting unhealthy for more than 2 minutes.
+
+      - alert: HighAPILatency
+        expr: |
+          histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "API p95 latency exceeds 5 seconds"
+          description: >
+            95th percentile API latency is {{ printf "%.1f" $value }}s
+            for {{ $labels.method }} {{ $labels.path }}.
+
+      - alert: HighAPIErrorRate
+        expr: |
+          (
+            rate(http_requests_total{status_code=~"5.."}[5m])
+            /
+            rate(http_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          runbook: "https://wiki.company.com/runbooks/api-5xx"
+        annotations:
+          summary: "HTTP 5xx error rate exceeds 5%"
+          description: >
+            5xx error rate is {{ printf "%.1f" (mul $value 100) }}%
+            in {{ $labels.environment }}.
+
+      - alert: HighConcurrentRequests
+        expr: |
+          http_requests_in_flight > 500
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High number of concurrent HTTP requests"
+          description: >
+            {{ $value }} concurrent requests in {{ $labels.environment }}.
+            May indicate slow processing or an attack.
+
+  # ============================================================
+  # KAFKA / MESSAGING ALERTS
+  # ============================================================
+
+  - name: kafka_alerts
+    interval: 1m
+    rules:
+
+      - alert: KafkaConsumerLagHigh
+        expr: |
+          kafka_consumer_lag > 10000
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kafka consumer lag is high"
+          description: >
+            Consumer group {{ $labels.consumer_group }} is
+            {{ $value }} messages behind on topic {{ $labels.topic }},
+            partition {{ $labels.partition }} in {{ $labels.environment }}.
+
+      - alert: KafkaConsumerLagCritical
+        expr: |
+          kafka_consumer_lag > 100000
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          runbook: "https://wiki.company.com/runbooks/kafka-lag"
+        annotations:
+          summary: "Kafka consumer lag is critically high"
+          description: >
+            Consumer group {{ $labels.consumer_group }} is
+            {{ $value }} messages behind. Migration pipeline may be stalled.
+
+  # ============================================================
+  # DATABASE ALERTS
+  # ============================================================
+
+  - name: database_alerts
+    interval: 1m
+    rules:
+
+      - alert: LegacyDBSlowQueries
+        expr: |
+          histogram_quantile(0.95, rate(legacy_db_query_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Legacy DB p95 query time exceeds 5 seconds"
+          description: >
+            95th percentile query time on legacy database is
+            {{ printf "%.1f" $value }}s for table {{ $labels.table }}
+            in {{ $labels.environment }}.
+
+      - alert: LegacyDBConnectionPoolExhausted
+        expr: |
+          legacy_db_connections_pool_size{state="waiting"} > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          runbook: "https://wiki.company.com/runbooks/db-connection-pool"
+        annotations:
+          summary: "Legacy DB connection pool nearly exhausted"
+          description: >
+            {{ $value }} queries waiting for DB connections in {{ $labels.environment }}.
+            Consider increasing pool size or investigating slow queries.
+
+      - alert: LegacyDBHighErrorRate
+        expr: |
+          rate(legacy_db_errors_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "High legacy database error rate"
+          description: >
+            {{ printf "%.1f" $value }} errors/second on legacy database
+            in {{ $labels.environment }}, table {{ $labels.table }}.
+
+  # ============================================================
+  # SECURITY ALERTS
+  # ============================================================
+
+  - name: security_alerts
+    interval: 30s
+    rules:
+
+      - alert: HighAuthFailureRate
+        expr: |
+          rate(auth_attempts_total{outcome="failure"}[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          team: security
+          runbook: "https://wiki.company.com/runbooks/auth-failures"
+        annotations:
+          summary: "High authentication failure rate — possible brute force"
+          description: >
+            {{ printf "%.1f" $value }} auth failures/second in {{ $labels.environment }}.
+            Check for brute force or credential stuffing attack.
+
+      - alert: UnauthorizedAccessSpike
+        expr: |
+          rate(authz_decisions_total{decision="deny"}[5m]) > 20
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+          runbook: "https://wiki.company.com/runbooks/authz-denials"
+        annotations:
+          summary: "Spike in authorization denials — possible privilege escalation attempt"
+          description: >
+            {{ printf "%.1f" $value }} authz denials/second in {{ $labels.environment }}.
+            Permission: {{ $labels.permission }}.
