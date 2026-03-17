@@ -4,7 +4,8 @@
 # =============================================================================
 
 .PHONY: help setup install start stop restart logs \
-        seed seed-legacy migrate mock-sf \
+        seed seed-legacy migrate mock-sf dashboard \
+        sf-setup sf-deploy sf-deploy-dry sf-open \
         validate test test-unit test-security test-integration \
         clean clean-data status
 
@@ -36,10 +37,10 @@ help: ## Show this help message
 	@grep -E '^(start|stop|restart|logs|status):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(BOLD)DATA$(RESET)"
-	@grep -E '^(seed|seed-legacy|mock-sf):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
+	@grep -E '^(seed|seed-legacy|mock-sf|dashboard):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(BOLD)MIGRATION$(RESET)"
-	@grep -E '^(migrate|demo):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
+	@grep -E '^(migrate|demo|sf-.*):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(BOLD)VALIDATION & TESTS$(RESET)"
 	@grep -E '^(validate|test.*):.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  $(GREEN)make %-22s$(RESET) %s\n", $$1, $$2}'
@@ -154,6 +155,10 @@ mock-sf: ## Start local mock Salesforce API server (port 9001)
 	@echo "$(BOLD)▶ Starting mock Salesforce server on http://localhost:9001$(RESET)"
 	@$(PYTHON) demo/mock_sf_server.py
 
+dashboard: ## Start local migration control dashboard (http://localhost:8080)
+	@echo "$(BOLD)▶ Starting LSMP Dashboard on http://localhost:8080$(RESET)"
+	@$(PYTHON) dashboard/app.py
+
 ## ─── MIGRATION ───────────────────────────────────────────────────────────────
 
 demo: ## Run the full demo migration pipeline (dry-run)
@@ -164,6 +169,19 @@ migrate: ## Run a real migration (requires SF credentials in .env)
 	@echo "$(BOLD)$(YELLOW)▶ Running migration (MIGRATION_DRY_RUN controls whether writes happen)...$(RESET)"
 	@$(PYTHON) -m agents.orchestrator.multi_agent_orchestrator \
 		"Run the full migration pipeline for all pending legacy records."
+
+sf-setup: ## Interactive Salesforce sandbox authentication and .env update
+	@python3 scripts/setup_salesforce_sandbox.py
+
+sf-deploy: ## Deploy Salesforce metadata (SFDX) to sandbox org
+	@bash scripts/deploy_to_salesforce.sh $(ORG)
+
+sf-deploy-dry: ## Validate metadata deploy without committing (dry-run)
+	@bash scripts/deploy_to_salesforce.sh $(ORG) --dry-run
+
+sf-open: ## Open the Salesforce org in browser
+	@sf org open --target-org $(ORG) --path "/lightning/app/Migration_Control_Center" 2>/dev/null || \
+	 sfdx force:org:open --targetusername $(ORG) 2>/dev/null || echo "Run: sf org open"
 
 ## ─── VALIDATION & TESTS ──────────────────────────────────────────────────────
 

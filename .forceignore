@@ -1,0 +1,8 @@
+# SFDX .forceignore
+.forceignore
+**/node_modules/**
+**/.git/**
+**/package.json
+**/jsconfig.json
+**/.eslintrc.json
+**/lwc/**/__tests__/**

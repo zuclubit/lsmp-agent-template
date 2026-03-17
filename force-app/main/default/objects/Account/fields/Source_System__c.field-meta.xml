@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Source_System__c</fullName>
+    <description>Legacy source system from which this record was migrated.</description>
+    <externalId>false</externalId>
+    <label>Source System</label>
+    <required>false</required>
+    <trackFeedHistory>false</trackFeedHistory>
+    <trackHistory>false</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value><fullName>SIEBEL_8_1</fullName><default>false</default><label>Oracle Siebel 8.1</label></value>
+            <value><fullName>SAP_CRM_7_0</fullName><default>false</default><label>SAP CRM 7.0</label></value>
+            <value><fullName>POSTGRESQL</fullName><default>false</default><label>PostgreSQL</label></value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

@@ -1,0 +1,314 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Custom Object: MigrationLog__c
+    Description  : Tracks each migration batch run — status, statistics, errors.
+                   Used by the Migration Dashboard and reporting.
+    Author       : Migration Platform Team
+    Modified     : 2026-03-16
+-->
+<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
+    <actionOverrides>
+        <actionName>Accept</actionName>
+        <type>Default</type>
+    </actionOverrides>
+
+    <allowInChatterGroups>false</allowInChatterGroups>
+    <compactLayoutAssignment>SYSTEM</compactLayoutAssignment>
+    <deploymentStatus>Deployed</deploymentStatus>
+    <description>Tracks the status, statistics, and error summaries of each migration batch run.</description>
+    <enableActivities>true</enableActivities>
+    <enableBulkApi>true</enableBulkApi>
+    <enableFeeds>false</enableFeeds>
+    <enableHistory>true</enableHistory>
+    <enableLicensing>false</enableLicensing>
+    <enableReports>true</enableReports>
+    <enableSearch>true</enableSearch>
+    <enableSharing>true</enableSharing>
+    <enableStreamingApi>true</enableStreamingApi>
+    <label>Migration Log</label>
+    <nameField>
+        <label>Batch Label</label>
+        <trackHistory>false</trackHistory>
+        <type>Text</type>
+    </nameField>
+    <pluralLabel>Migration Logs</pluralLabel>
+    <sharingModel>ReadWrite</sharingModel>
+    <visibility>Public</visibility>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         FIELDS
+    ══════════════════════════════════════════════════════════════════════════ -->
+
+    <!-- Batch Job ID (from AsyncApexJob) -->
+    <fields>
+        <fullName>Batch_Job_Id__c</fullName>
+        <description>Salesforce AsyncApexJob ID for this batch run.</description>
+        <externalId>false</externalId>
+        <label>Batch Job ID</label>
+        <length>18</length>
+        <required>false</required>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Text</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Run ID (internal correlation) -->
+    <fields>
+        <fullName>Run_Id__c</fullName>
+        <description>Internal migration run correlation ID.</description>
+        <externalId>true</externalId>
+        <label>Run ID</label>
+        <length>80</length>
+        <required>false</required>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Text</type>
+        <unique>true</unique>
+    </fields>
+
+    <!-- Object Name -->
+    <fields>
+        <fullName>Object_Name__c</fullName>
+        <description>Salesforce object API name being migrated (e.g., Account, Contact).</description>
+        <externalId>false</externalId>
+        <label>Object Name</label>
+        <length>255</length>
+        <required>true</required>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Text</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Total Processed -->
+    <fields>
+        <fullName>Total_Processed__c</fullName>
+        <description>Total number of records touched by this batch.</description>
+        <externalId>false</externalId>
+        <label>Total Processed</label>
+        <precision>18</precision>
+        <required>false</required>
+        <scale>0</scale>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Number</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Total Success -->
+    <fields>
+        <fullName>Total_Success__c</fullName>
+        <description>Number of records successfully migrated.</description>
+        <externalId>false</externalId>
+        <label>Total Success</label>
+        <precision>18</precision>
+        <required>false</required>
+        <scale>0</scale>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Number</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Total Failed -->
+    <fields>
+        <fullName>Total_Failed__c</fullName>
+        <description>Number of records that failed during migration.</description>
+        <externalId>false</externalId>
+        <label>Total Failed</label>
+        <precision>18</precision>
+        <required>false</required>
+        <scale>0</scale>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Number</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Status picklist -->
+    <fields>
+        <fullName>Status__c</fullName>
+        <description>Overall outcome of the migration batch.</description>
+        <externalId>false</externalId>
+        <label>Status</label>
+        <required>false</required>
+        <trackHistory>true</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Picklist</type>
+        <valueSet>
+            <restricted>true</restricted>
+            <valueSetDefinition>
+                <sorted>false</sorted>
+                <value>
+                    <fullName>Queued</fullName>
+                    <default>true</default>
+                    <label>Queued</label>
+                </value>
+                <value>
+                    <fullName>Running</fullName>
+                    <default>false</default>
+                    <label>Running</label>
+                </value>
+                <value>
+                    <fullName>Success</fullName>
+                    <default>false</default>
+                    <label>Success</label>
+                </value>
+                <value>
+                    <fullName>Completed with Errors</fullName>
+                    <default>false</default>
+                    <label>Completed with Errors</label>
+                </value>
+                <value>
+                    <fullName>Failed</fullName>
+                    <default>false</default>
+                    <label>Failed</label>
+                </value>
+                <value>
+                    <fullName>Aborted</fullName>
+                    <default>false</default>
+                    <label>Aborted</label>
+                </value>
+            </valueSetDefinition>
+        </valueSet>
+    </fields>
+
+    <!-- Summary (long text) -->
+    <fields>
+        <fullName>Summary__c</fullName>
+        <description>Human-readable batch completion summary.</description>
+        <externalId>false</externalId>
+        <label>Summary</label>
+        <length>32768</length>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>LongTextArea</type>
+        <visibleLines>6</visibleLines>
+    </fields>
+
+    <!-- Dry Run flag -->
+    <fields>
+        <fullName>Dry_Run__c</fullName>
+        <defaultValue>false</defaultValue>
+        <description>If checked, the batch ran in dry-run mode (no records written).</description>
+        <externalId>false</externalId>
+        <label>Dry Run</label>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Checkbox</type>
+    </fields>
+
+    <!-- Start Time -->
+    <fields>
+        <fullName>Start_Time__c</fullName>
+        <description>DateTime when the batch job started.</description>
+        <externalId>false</externalId>
+        <label>Start Time</label>
+        <required>false</required>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>DateTime</type>
+    </fields>
+
+    <!-- End Time -->
+    <fields>
+        <fullName>End_Time__c</fullName>
+        <description>DateTime when the batch job completed.</description>
+        <externalId>false</externalId>
+        <label>End Time</label>
+        <required>false</required>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>DateTime</type>
+    </fields>
+
+    <!-- Duration (formula) -->
+    <fields>
+        <fullName>Duration_Minutes__c</fullName>
+        <description>Elapsed time in minutes (End Time - Start Time).</description>
+        <externalId>false</externalId>
+        <formula>IF(AND(NOT(ISBLANK(Start_Time__c)), NOT(ISBLANK(End_Time__c))),
+    (End_Time__c - Start_Time__c) * 1440, NULL)</formula>
+        <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
+        <label>Duration (Minutes)</label>
+        <precision>18</precision>
+        <required>false</required>
+        <scale>2</scale>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Number</type>
+        <unique>false</unique>
+    </fields>
+
+    <!-- Success Rate (formula) -->
+    <fields>
+        <fullName>Success_Rate__c</fullName>
+        <description>Percentage of records successfully migrated.</description>
+        <externalId>false</externalId>
+        <formula>IF(Total_Processed__c &gt; 0,
+    (Total_Success__c / Total_Processed__c) * 100, 0)</formula>
+        <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
+        <label>Success Rate (%)</label>
+        <precision>5</precision>
+        <required>false</required>
+        <scale>2</scale>
+        <trackHistory>false</trackHistory>
+        <trackTrending>false</trackTrending>
+        <type>Percent</type>
+    </fields>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         LIST VIEWS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <listViews>
+        <fullName>All_Migration_Logs</fullName>
+        <columns>NAME</columns>
+        <columns>Object_Name__c</columns>
+        <columns>Status__c</columns>
+        <columns>Total_Processed__c</columns>
+        <columns>Total_Success__c</columns>
+        <columns>Total_Failed__c</columns>
+        <columns>Success_Rate__c</columns>
+        <columns>Duration_Minutes__c</columns>
+        <columns>Dry_Run__c</columns>
+        <columns>CREATED_DATE</columns>
+        <filterScope>Everything</filterScope>
+        <label>All Migration Logs</label>
+        <sharedTo>
+            <allInternalUsers></allInternalUsers>
+        </sharedTo>
+    </listViews>
+    <listViews>
+        <fullName>Failed_Runs</fullName>
+        <columns>NAME</columns>
+        <columns>Object_Name__c</columns>
+        <columns>Status__c</columns>
+        <columns>Total_Failed__c</columns>
+        <columns>CREATED_DATE</columns>
+        <filterScope>Everything</filterScope>
+        <filters>
+            <field>Status__c</field>
+            <operation>equals</operation>
+            <value>Failed,Completed with Errors</value>
+        </filters>
+        <label>Failed Runs</label>
+        <sharedTo>
+            <allInternalUsers></allInternalUsers>
+        </sharedTo>
+    </listViews>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         SEARCH LAYOUTS
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <searchLayouts>
+        <listViewButtons>New</listViewButtons>
+        <lookupDialogsAdditionalFields>Object_Name__c</lookupDialogsAdditionalFields>
+        <lookupDialogsAdditionalFields>Status__c</lookupDialogsAdditionalFields>
+        <lookupDialogsAdditionalFields>CREATED_DATE</lookupDialogsAdditionalFields>
+        <searchResultsAdditionalFields>Object_Name__c</searchResultsAdditionalFields>
+        <searchResultsAdditionalFields>Status__c</searchResultsAdditionalFields>
+        <searchResultsAdditionalFields>Total_Processed__c</searchResultsAdditionalFields>
+    </searchLayouts>
+
+</CustomObject>

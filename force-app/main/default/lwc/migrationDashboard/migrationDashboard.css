@@ -1,0 +1,89 @@
+/* ============================================================================
+   Migration Dashboard — SLDS-compatible component styles
+   ============================================================================ */
+
+/* ── KPI Cards ─────────────────────────────────────────────────────────── */
+.kpi-card {
+    border-radius: 0.5rem;
+    min-height: 120px;
+    transition: box-shadow 0.2s ease;
+}
+.kpi-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+.kpi-card--total  { border-top: 4px solid #0070d2; }
+.kpi-card--success{ border-top: 4px solid #04844b; }
+.kpi-card--error  { border-top: 4px solid #c23934; }
+.kpi-card--pending{ border-top: 4px solid #706e6b; }
+
+.kpi-label  { font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+              color: #706e6b; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+.kpi-value  { font-size: 2.25rem; font-weight: 700; color: #032d60; line-height: 1.1; }
+.kpi-value--success { color: #04844b; }
+.kpi-value--error   { color: #c23934; }
+.kpi-value--pending { color: #706e6b; }
+.kpi-sublabel       { font-size: 0.75rem; color: #706e6b; margin-top: 0.25rem; }
+
+/* ── Progress bar area ──────────────────────────────────────────────────── */
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.5rem;
+}
+.progress-label   { font-weight: 600; font-size: 0.875rem; }
+.progress-estimate{ font-size: 0.75rem; color: #706e6b; }
+
+.progress-legend  { margin-top: 0.5rem; font-size: 0.75rem; color: #444; }
+.legend-dot       { display: inline-block; width: 10px; height: 10px;
+                    border-radius: 50%; margin-right: 4px; }
+.legend-dot--success     { background: #04844b; }
+.legend-dot--in-progress { background: #0070d2; }
+.legend-dot--error       { background: #c23934; }
+.legend-dot--pending     { background: #706e6b; }
+
+/* ── Object rows ────────────────────────────────────────────────────────── */
+.object-row   { padding: 0.5rem 0; border-bottom: 1px solid #e0e0e0; }
+.object-row:last-child { border-bottom: none; }
+.object-label { font-weight: 600; font-size: 0.875rem; }
+.object-count { font-size: 0.75rem; color: #706e6b; }
+.object-sub   { margin-top: 0.25rem; }
+
+.badge         { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 0.75rem;
+                 font-size: 0.7rem; font-weight: 600; margin-right: 0.5rem; }
+.badge--success{ background: #d4edda; color: #155724; }
+.badge--error  { background: #f8d7da; color: #721c24; }
+
+/* ── Batch run rows ─────────────────────────────────────────────────────── */
+.batch-run-row  { padding: 0.375rem 0; border-bottom: 1px solid #f3f3f3; }
+.batch-run-label{ font-size: 0.8125rem; font-weight: 600; margin: 0; }
+.batch-run-meta { font-size: 0.75rem; color: #706e6b; margin: 0.125rem 0 0; }
+
+/* ── No-errors state ────────────────────────────────────────────────────── */
+.no-errors-container {
+    text-align: center;
+    padding: 2rem;
+    color: #04844b;
+}
+
+/* ── Alert / error toast ────────────────────────────────────────────────── */
+.migration-alert { margin-bottom: 1rem; border-radius: 0.25rem; }
+
+/* ── Loading overlay ────────────────────────────────────────────────────── */
+.loading-overlay {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.8); z-index: 100;
+    border-radius: 0.25rem;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.refresh-footer {
+    display: flex; align-items: center;
+    font-size: 0.75rem; color: #706e6b;
+    padding-top: 0.5rem;
+    border-top: 1px solid #e0e0e0;
+    margin-top: 0.5rem;
+}
+
+/* ── Error badge ─────────────────────────────────────────────────────────── */
+.error-badge { --sds-c-badge-color-background: #c23934; --sds-c-badge-text-color: #fff; }

@@ -1,0 +1,23 @@
+<template>
+    <lightning-card title="Migration Status" icon-name="utility:sync">
+        <div class="slds-var-p-around_medium">
+            <template if:true={isLoading}>
+                <lightning-spinner size="small"></lightning-spinner>
+            </template>
+            <template if:false={isLoading}>
+                <dl class="slds-dl_horizontal">
+                    <dt class="slds-dl_horizontal__label slds-text-color_weak">Legacy ID</dt>
+                    <dd class="slds-dl_horizontal__detail">{legacyId}</dd>
+                    <dt class="slds-dl_horizontal__label slds-text-color_weak">Status</dt>
+                    <dd class="slds-dl_horizontal__detail">
+                        <span class={statusClass}>{migrationStatus}</span>
+                    </dd>
+                    <dt class="slds-dl_horizontal__label slds-text-color_weak">Source</dt>
+                    <dd class="slds-dl_horizontal__detail">{sourceSystem}</dd>
+                    <dt class="slds-dl_horizontal__label slds-text-color_weak">Batch</dt>
+                    <dd class="slds-dl_horizontal__detail">{migrationBatch}</dd>
+                </dl>
+            </template>
+        </div>
+    </lightning-card>
+</template>

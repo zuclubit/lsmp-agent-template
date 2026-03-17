@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Grants the migration integration service account the minimum permissions required to migrate records from the legacy system to Salesforce. Follows least-privilege principle.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>Legacy Migration Integration</label>
+    <license>Salesforce</license>
+
+    <!-- Object permissions -->
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>false</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <allowViewAllRecords>true</allowViewAllRecords>
+        <allowModifyAllRecords>false</allowModifyAllRecords>
+        <object>Account</object>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>false</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <allowViewAllRecords>true</allowViewAllRecords>
+        <allowModifyAllRecords>false</allowModifyAllRecords>
+        <object>Contact</object>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>false</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <allowViewAllRecords>true</allowViewAllRecords>
+        <allowModifyAllRecords>false</allowModifyAllRecords>
+        <object>Opportunity</object>
+    </objectPermissions>
+    <objectPermissions>
+        <allowCreate>true</allowCreate>
+        <allowDelete>true</allowDelete>
+        <allowEdit>true</allowEdit>
+        <allowRead>true</allowRead>
+        <allowViewAllRecords>true</allowViewAllRecords>
+        <allowModifyAllRecords>true</allowModifyAllRecords>
+        <object>MigrationLog__c</object>
+    </objectPermissions>
+
+    <!-- Account custom fields -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Legacy_ID__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Migration_Batch__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Account.Source_System__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- Contact custom fields -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Contact.Legacy_ID__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Contact.Migration_Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- Opportunity custom fields -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Opportunity.Legacy_ID__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>Opportunity.Migration_Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- MigrationLog__c fields -->
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Batch_Job_Id__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Run_Id__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Object_Name__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Processed__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Success__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Total_Failed__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Status__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Summary__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Dry_Run__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.Start_Time__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+    <fieldPermissions>
+        <editable>true</editable>
+        <field>MigrationLog__c.End_Time__c</field>
+        <readable>true</readable>
+    </fieldPermissions>
+
+    <!-- API access -->
+    <userPermissions>
+        <enabled>true</enabled>
+        <name>ApiEnabled</name>
+    </userPermissions>
+    <userPermissions>
+        <enabled>true</enabled>
+        <name>BulkApiHardDelete</name>
+    </userPermissions>
+</PermissionSet>

@@ -91,7 +91,6 @@ logs/
 # Salesforce CLI
 .sfdx/
 .sf/
-force-app/
 
 # Terraform
 .terraform/

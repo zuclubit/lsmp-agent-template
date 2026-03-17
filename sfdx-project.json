@@ -1,0 +1,19 @@
+{
+  "packageDirectories": [
+    {
+      "path": "force-app",
+      "default": true,
+      "package": "LSMP-Migration-Platform",
+      "versionName": "ver 1.0",
+      "versionNumber": "1.0.0.NEXT",
+      "versionDescription": "Legacy-to-Salesforce Migration Platform v1.0"
+    }
+  ],
+  "name": "lsmp-migration-platform",
+  "namespace": "",
+  "sfdcLoginUrl": "https://test.salesforce.com",
+  "sourceApiVersion": "59.0",
+  "plugins": {
+    "Lightning Web Components": {}
+  }
+}
