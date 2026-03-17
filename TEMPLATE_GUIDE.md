@@ -146,4 +146,26 @@ final_utility:           > 0.80  (outcome quality)
 
 ---
 
+## Key Invariants That Must Never Be Violated
+
+These invariants protect against data loss, security breaches, and compliance failures. They must be preserved regardless of what other changes are made:
+
+1. Validation defaults to FAIL — `overall_score = 0.0`, `grade = "F"` when no report is parsed
+2. BlockingGate halts the pipeline on grade D/F or risk level CRITICAL/HIGH
+3. `cancel_migration` requires `confirm: true` and an explicit human approval event in the log
+4. `read_file` rejects paths outside `PROJECT_ROOT` — canonical path check enforced
+5. All tool errors set `is_error: True` on the tool result block — never silently pass
+6. Halcon metrics are computed from real run data — never hardcode `final_utility` or `convergence_efficiency`
+7. SOQL is restricted to SELECT statements — the allowlist in `security/policies.yaml` is enforced at the dispatch layer
+
+---
+
+## Getting Help
+
+- Open a GitHub Discussion for architectural questions
+- File a GitHub Issue using the bug report or feature request templates
+- See `CONTRIBUTING.md` for development standards and the PR process
+
+---
+
 *Template version: 1.0.0 | Updated: 2026-03-17 | Maintained by zuclubit/platform-engineering*
