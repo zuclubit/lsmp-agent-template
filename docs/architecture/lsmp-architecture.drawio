@@ -1,0 +1,582 @@
+<mxfile host="app.diagrams.net" modified="2026-03-17T00:00:00.000Z" agent="Claude Code" version="21.0.0" type="device">
+  <diagram id="page1" name="01 — Contexto del Sistema">
+    <mxGraphModel dx="1654" dy="1169" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0" background="#0d1117">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Header Bar -->
+        <mxCell id="p1-header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1654" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-logo" value="&lt;b style=&quot;font-size:20px;color:#ffd700;&quot;&gt;CUERVO&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-title" value="&lt;b style=&quot;font-size:18px;color:#ffffff;&quot;&gt;LSMP — LEGACY-TO-SALESFORCE MIGRATION PLATFORM&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="400" y="10" width="854" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-version" value="&lt;span style=&quot;font-size:10px;color:#8b949e;&quot;&gt;v1.0 | MARZO 2026 | CONFIDENCIAL&lt;/span&gt;" style="text;html=1;align=right;verticalAlign=middle;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="10" width="190" height="40" as="geometry"/>
+        </mxCell>
+        <!-- Left Section: SISTEMAS FUENTE -->
+        <mxCell id="p1-left-container" value="&lt;b style=&quot;font-size:13px;color:#8957e5;&quot;&gt;SISTEMAS FUENTE&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#8957e5;strokeWidth=2;verticalAlign=top;fontSize=13;fontColor=#8957e5;" vertex="1" parent="1">
+          <mxGeometry x="30" y="80" width="320" height="680" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-siebel" value="&lt;b style=&quot;color:#ffffff;font-size:13px;&quot;&gt;Oracle Siebel 8.1&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;4.2M Customer Records&lt;br/&gt;CRM Legacy Core&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="55" y="140" width="270" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-sap" value="&lt;b style=&quot;color:#ffffff;font-size:13px;&quot;&gt;SAP CRM 7.0&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;18M Case Records&lt;br/&gt;Service Management&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="55" y="290" width="270" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-postgres" value="&lt;b style=&quot;color:#ffffff;font-size:13px;&quot;&gt;PostgreSQL Legacy&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;1.1M Opportunity Records&lt;br/&gt;Sales Pipeline Data&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;strokeWidth=2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="55" y="440" width="270" height="120" as="geometry"/>
+        </mxCell>
+        <!-- Center Section: LSMP -->
+        <mxCell id="p1-center-container" value="&lt;b style=&quot;font-size:13px;color:#58a6ff;&quot;&gt;PLATAFORMA LSMP — SISTEMA MULTI-AGENTE IA&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;font-size:10px;color:#8b949e;&quot;&gt;FedRAMP High | FISMA Moderate | CUI/PII/PHI&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#1f6feb;strokeWidth=2;verticalAlign=top;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="380" y="80" width="870" height="680" as="geometry"/>
+        </mxCell>
+        <!-- Orchestrator Agent -->
+        <mxCell id="p1-orchestrator" value="&lt;b style=&quot;color:#ffd700;font-size:13px;&quot;&gt;orchestrator-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;claude-opus-4-6 | max_tokens: 4096&lt;br/&gt;Supervisor — Routes &amp; Synthesizes&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a2d1a;strokeColor=#ffd700;strokeWidth=3;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="565" y="140" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <!-- Specialist Agents 2x2 -->
+        <mxCell id="p1-migration-agent" value="&lt;b style=&quot;color:#58a6ff;font-size:12px;&quot;&gt;migration-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Run lifecycle control&lt;br/&gt;Error investigation&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="420" y="290" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-validation-agent" value="&lt;b style=&quot;color:#3fb950;font-size:12px;&quot;&gt;data-validation-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Data quality gating&lt;br/&gt;Grade A-F output&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="640" y="290" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-security-agent" value="&lt;b style=&quot;color:#f85149;font-size:12px;&quot;&gt;security-audit-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;OWASP scanning&lt;br/&gt;CVE checks&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="860" y="290" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-docs-agent" value="&lt;b style=&quot;color:#d2a8ff;font-size:12px;&quot;&gt;documentation-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Runbooks &amp; reports&lt;br/&gt;Field maps&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#d2a8ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="290" width="140" height="90" as="geometry"/>
+        </mxCell>
+        <!-- MCP Servers Row -->
+        <mxCell id="p1-mcp-label" value="&lt;b style=&quot;color:#8b949e;font-size:11px;&quot;&gt;MCP SERVERS&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="390" y="430" width="120" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp1" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;project-context&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="390" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp2" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;documentation&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="505" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp3" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;runtime-context&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="620" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp4" value="&lt;span style=&quot;color:#58a6ff;font-size:9px;&quot;&gt;memory&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="735" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp5" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;security-context&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="850" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp6" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;filesystem&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="965" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-mcp7" value="&lt;span style=&quot;color:#c9d1d9;font-size:9px;&quot;&gt;api-server&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;fontSize=9;" vertex="1" parent="1">
+          <mxGeometry x="1080" y="470" width="105" height="40" as="geometry"/>
+        </mxCell>
+        <!-- Right Section: SISTEMAS DESTINO -->
+        <mxCell id="p1-right-container" value="&lt;b style=&quot;font-size:13px;color:#39c5cf;&quot;&gt;SISTEMAS DESTINO&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0a1f1f;strokeColor=#39c5cf;strokeWidth=2;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="80" width="340" height="680" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-sf" value="&lt;b style=&quot;color:#ffffff;font-size:13px;&quot;&gt;Salesforce Gov Cloud+&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;Bulk API 2.0&lt;br/&gt;Government Cloud&lt;br/&gt;FedRAMP Authorized&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#003d5c;strokeColor=#00a1e0;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="130" width="300" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-vault" value="&lt;b style=&quot;color:#ffd700;font-size:12px;&quot;&gt;HashiCorp Vault&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Secrets Management&lt;br/&gt;Token Injection&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="290" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-prometheus" value="&lt;b style=&quot;color:#e6822e;font-size:12px;&quot;&gt;Prometheus + Grafana&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Metrics &amp; Dashboards&lt;br/&gt;Halcon Emitter&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="410" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-pagerduty" value="&lt;b style=&quot;color:#3fb950;font-size:12px;&quot;&gt;PagerDuty / ServiceNow&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Incident Management&lt;br/&gt;P1-P4 Severity&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="530" width="300" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Legacy → LSMP -->
+        <mxCell id="p1-arr1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#8957e5;strokeWidth=2;fillColor=#8957e5;" edge="1" source="p1-siebel" target="p1-migration-agent" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-arr2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#8957e5;strokeWidth=2;fillColor=#8957e5;" edge="1" source="p1-sap" target="p1-validation-agent" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-arr3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#8957e5;strokeWidth=2;fillColor=#8957e5;" edge="1" source="p1-postgres" target="p1-security-agent" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrow: LSMP → Salesforce -->
+        <mxCell id="p1-arr4" value="Bulk API 2.0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00a1e0;strokeWidth=3;fillColor=#00a1e0;fontColor=#00a1e0;fontSize=10;" edge="1" source="p1-center-container" target="p1-sf" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrow: LSMP → Vault (dashed gold) -->
+        <mxCell id="p1-arr5" value="secrets" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#ffd700;strokeWidth=2;fillColor=#ffd700;fontColor=#ffd700;fontSize=10;" edge="1" source="p1-center-container" target="p1-vault" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrow: LSMP → Monitoring -->
+        <mxCell id="p1-arr6" value="metrics" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#e6822e;strokeWidth=2;fillColor=#e6822e;fontColor=#e6822e;fontSize=10;" edge="1" source="p1-center-container" target="p1-prometheus" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Compliance Badges Row -->
+        <mxCell id="p1-badge1" value="&lt;b style=&quot;color:#ffffff;font-size:10px;&quot;&gt;FedRAMP High&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="130" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-badge2" value="&lt;b style=&quot;color:#ffffff;font-size:10px;&quot;&gt;FISMA Moderate&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0a1f1f;strokeColor=#39c5cf;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="290" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-badge3" value="&lt;b style=&quot;color:#ffffff;font-size:10px;&quot;&gt;CUI&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="450" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-badge4" value="&lt;b style=&quot;color:#ffffff;font-size:10px;&quot;&gt;PII / PHI&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="610" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-badge5" value="&lt;b style=&quot;color:#ffffff;font-size:10px;&quot;&gt;RPO = 0&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="770" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p1-badge6" value="&lt;b style=&quot;color:#000000;font-size:10px;&quot;&gt;Zero Data Loss&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffd700;strokeColor=#ffd700;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="930" y="800" width="140" height="35" as="geometry"/>
+        </mxCell>
+        <!-- Footer -->
+        <mxCell id="p1-footer" value="&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;CLASIFICACIÓN: CONFIDENCIAL | USO INTERNO | © 2026 CUERVO ENTERPRISE SOLUTIONS&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=#161b22;" vertex="1" parent="1">
+          <mxGeometry x="0" y="1130" width="1654" height="39" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page2" name="02 — Arquitectura Multi-Agente">
+    <mxGraphModel dx="2200" dy="1400" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0" background="#0d1117">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Header -->
+        <mxCell id="p2-header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2200" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-logo" value="&lt;b style=&quot;font-size:20px;color:#ffd700;&quot;&gt;CUERVO&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-title" value="&lt;b style=&quot;font-size:18px;color:#ffffff;&quot;&gt;02 — ARQUITECTURA MULTI-AGENTE&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="700" y="10" width="800" height="40" as="geometry"/>
+        </mxCell>
+        <!-- Security Audit Agent (top center) -->
+        <mxCell id="p2-security" value="&lt;b style=&quot;color:#f85149;font-size:13px;&quot;&gt;security-audit-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;scan_file_for_secrets&lt;br/&gt;check_dependency_vulnerabilities&lt;br/&gt;audit_salesforce_permissions&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="880" y="200" width="240" height="140" as="geometry"/>
+        </mxCell>
+        <!-- Orchestrator (center) -->
+        <mxCell id="p2-orchestrator" value="&lt;b style=&quot;color:#ffd700;font-size:14px;&quot;&gt;orchestrator-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;max_tokens: 4096&lt;br/&gt;delegate_to_migration_agent&lt;br/&gt;delegate_to_validation_agent&lt;br/&gt;run_agents_in_parallel&lt;br/&gt;synthesise_results&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a2d1a;strokeColor=#ffd700;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="880" y="500" width="280" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Migration Agent (left) -->
+        <mxCell id="p2-migration" value="&lt;b style=&quot;color:#58a6ff;font-size:13px;&quot;&gt;migration-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;check_migration_status&lt;br/&gt;pause_migration&lt;br/&gt;resume_migration&lt;br/&gt;cancel_migration&lt;br/&gt;scale_batch_size&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="150" y="480" width="240" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Data Validation Agent (left-bottom) -->
+        <mxCell id="p2-validation" value="&lt;b style=&quot;color:#3fb950;font-size:13px;&quot;&gt;data-validation-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;validate_record_counts&lt;br/&gt;check_field_completeness&lt;br/&gt;detect_anomalies&lt;br/&gt;Grade: A/B/C/D/F&lt;br/&gt;Score: 0.0–1.0&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="150" y="700" width="240" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Documentation Agent (right) -->
+        <mxCell id="p2-docs" value="&lt;b style=&quot;color:#d2a8ff;font-size:13px;&quot;&gt;documentation-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;generate_report&lt;br/&gt;create_runbook&lt;br/&gt;update_field_map&lt;br/&gt;Post-migration reports&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#d2a8ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="480" width="240" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Debugging Agent (right-bottom) -->
+        <mxCell id="p2-debug" value="&lt;b style=&quot;color:#e6822e;font-size:13px;&quot;&gt;debugging-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Model: claude-opus-4-6&lt;br/&gt;READ-ONLY MODE&lt;br/&gt;Log analysis&lt;br/&gt;Error diagnosis&lt;br/&gt;No destructive tools&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1700" y="700" width="240" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Orchestrator ↔ Security -->
+        <mxCell id="p2-arr-sec" value="delegate / result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#f85149;strokeWidth=2;fontColor=#f85149;fontSize=10;" edge="1" source="p2-orchestrator" target="p2-security" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Orchestrator ↔ Migration -->
+        <mxCell id="p2-arr-mig" value="delegate / result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#58a6ff;strokeWidth=2;fontColor=#58a6ff;fontSize=10;" edge="1" source="p2-orchestrator" target="p2-migration" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Orchestrator ↔ Validation (BLOCKED gate) -->
+        <mxCell id="p2-arr-val" value="&lt;b style=&quot;color:#f85149;&quot;&gt;BLOCKED&lt;/b&gt; / result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3fb950;strokeWidth=2;fontColor=#3fb950;fontSize=10;" edge="1" source="p2-orchestrator" target="p2-validation" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Orchestrator ↔ Docs -->
+        <mxCell id="p2-arr-docs" value="delegate / result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#d2a8ff;strokeWidth=2;fontColor=#d2a8ff;fontSize=10;" edge="1" source="p2-orchestrator" target="p2-docs" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Arrows: Orchestrator ↔ Debug -->
+        <mxCell id="p2-arr-debug" value="delegate / result" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#e6822e;strokeWidth=2;fontColor=#e6822e;fontSize=10;" edge="1" source="p2-orchestrator" target="p2-debug" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- pass_security_gate label -->
+        <mxCell id="p2-gate-label" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;pass_security_gate&lt;br/&gt;critical=0 &amp;amp; high=0&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#f85149;fillColor=#2d0d0d;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="900" y="370" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <!-- MCP Servers Row -->
+        <mxCell id="p2-mcp-bg" value="&lt;b style=&quot;color:#8b949e;font-size:12px;&quot;&gt;MCP SERVERS LAYER&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#161b22;strokeColor=#30363d;strokeWidth=2;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="100" y="1020" width="2000" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s1" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;project-context&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3001&lt;br/&gt;INTERNAL&lt;br/&gt;All agents&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="130" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s2" value="&lt;b style=&quot;color:#3fb950;font-size:11px;&quot;&gt;documentation&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3002&lt;br/&gt;INTERNAL&lt;br/&gt;docs-agent&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;" vertex="1" parent="1">
+          <mxGeometry x="390" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s3" value="&lt;b style=&quot;color:#e6822e;font-size:11px;&quot;&gt;runtime-context&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3003&lt;br/&gt;INTERNAL&lt;br/&gt;migration-agent&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;" vertex="1" parent="1">
+          <mxGeometry x="650" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s4" value="&lt;b style=&quot;color:#ffd700;font-size:11px;&quot;&gt;memory&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3004&lt;br/&gt;RESTRICTED&lt;br/&gt;All agents&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="910" y="1050" width="230" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s5" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;security-context&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3005&lt;br/&gt;RESTRICTED&lt;br/&gt;security-agent&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="1170" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s6" value="&lt;b style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;filesystem&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3006&lt;br/&gt;INTERNAL&lt;br/&gt;PROJECT_ROOT only&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="1430" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2-mcp-s7" value="&lt;b style=&quot;color:#d2a8ff;font-size:11px;&quot;&gt;api-server&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Port: 3007&lt;br/&gt;INTERNAL&lt;br/&gt;migration-agent&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#d2a8ff;" vertex="1" parent="1">
+          <mxGeometry x="1690" y="1060" width="230" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Legend -->
+        <mxCell id="p2-legend" value="&lt;b style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;LEYENDA&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#ffd700;&quot;&gt;■&lt;/span&gt; Orchestrator&lt;br/&gt;&lt;span style=&quot;color:#58a6ff;&quot;&gt;■&lt;/span&gt; Migration&lt;br/&gt;&lt;span style=&quot;color:#3fb950;&quot;&gt;■&lt;/span&gt; Validation&lt;br/&gt;&lt;span style=&quot;color:#f85149;&quot;&gt;■&lt;/span&gt; Security&lt;br/&gt;&lt;span style=&quot;color:#d2a8ff;&quot;&gt;■&lt;/span&gt; Documentation&lt;br/&gt;&lt;span style=&quot;color:#e6822e;&quot;&gt;■&lt;/span&gt; Debugging" style="text;html=1;align=left;verticalAlign=top;strokeColor=#30363d;fillColor=#161b22;rounded=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1970" y="650" width="180" height="180" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page3" name="03 — Pipeline de Migración">
+    <mxGraphModel dx="2400" dy="1000" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1000" math="0" shadow="0" background="#0d1117">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Header -->
+        <mxCell id="p3-header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2400" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-logo" value="&lt;b style=&quot;font-size:20px;color:#ffd700;&quot;&gt;CUERVO&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-title" value="&lt;b style=&quot;font-size:18px;color:#ffffff;&quot;&gt;03 — PIPELINE DE MIGRACIÓN&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="800" y="10" width="800" height="40" as="geometry"/>
+        </mxCell>
+        <!-- Phase 1: EXTRACCIÓN -->
+        <mxCell id="p3-ph1" value="&lt;b style=&quot;color:#8957e5;font-size:14px;&quot;&gt;① EXTRACCIÓN&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#8957e5;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="20" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph1-agent" value="&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;migration-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph1-siebel" value="&lt;b style=&quot;color:#ffffff;font-size:11px;&quot;&gt;Oracle Siebel 8.1&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;siebel_accounts&lt;br/&gt;siebel_contacts&lt;br/&gt;4.2M records&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;" vertex="1" parent="1">
+          <mxGeometry x="45" y="160" width="310" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph1-sap" value="&lt;b style=&quot;color:#ffffff;font-size:11px;&quot;&gt;SAP CRM 7.0&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;sap_cases&lt;br/&gt;18M records&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;" vertex="1" parent="1">
+          <mxGeometry x="45" y="260" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph1-pg" value="&lt;b style=&quot;color:#ffffff;font-size:11px;&quot;&gt;PostgreSQL Legacy&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;siebel_opportunities&lt;br/&gt;1.1M records&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d1f6e;strokeColor=#8957e5;" vertex="1" parent="1">
+          <mxGeometry x="45" y="350" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph1-schema" value="&lt;b style=&quot;color:#8b949e;font-size:10px;&quot;&gt;legacy_db schema&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=#30363d;fillColor=#21262d;rounded=1;" vertex="1" parent="1">
+          <mxGeometry x="45" y="440" width="310" height="30" as="geometry"/>
+        </mxCell>
+        <!-- Phase 2: TRANSFORMACIÓN -->
+        <mxCell id="p3-ph2" value="&lt;b style=&quot;color:#58a6ff;font-size:14px;&quot;&gt;② TRANSFORMACIÓN&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="400" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph2-agent" value="&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;migration-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="400" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph2-map" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;Field Mapping Engine&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;migration_field_map table&lt;br/&gt;24 field mappings&lt;br/&gt;Data type validation&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="425" y="160" width="310" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph2-legacyid" value="&lt;b style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;Legacy_ID__c Assignment&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;Unique identifier preservation&lt;br/&gt;Cross-reference table&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="425" y="270" width="310" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph2-batch" value="&lt;b style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;Batch Preparation&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;migration_batch_jobs&lt;br/&gt;200 records (demo)&lt;br/&gt;4.2M records (prod)&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="425" y="370" width="310" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Phase 3: VALIDACIÓN -->
+        <mxCell id="p3-ph3" value="&lt;b style=&quot;color:#3fb950;font-size:14px;&quot;&gt;③ VALIDACIÓN&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="780" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph3-agent" value="&lt;span style=&quot;color:#3fb950;font-size:10px;&quot;&gt;data-validation-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="780" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph3-tools" value="&lt;b style=&quot;color:#3fb950;font-size:11px;&quot;&gt;Validation Tools&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;validate_record_counts&lt;br/&gt;check_field_completeness&lt;br/&gt;detect_anomalies&lt;br/&gt;check_referential_integrity&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;" vertex="1" parent="1">
+          <mxGeometry x="805" y="160" width="310" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph3-grade" value="&lt;b style=&quot;color:#ffd700;font-size:12px;&quot;&gt;Grade: A / B / C / D / F&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Score: 0.0 – 1.0&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;" vertex="1" parent="1">
+          <mxGeometry x="805" y="280" width="310" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph3-gate" value="&lt;b style=&quot;color:#f85149;font-size:13px;&quot;&gt;⛔ GATE&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#f85149;font-size:11px;&quot;&gt;Grade D or F = BLOCKED&lt;br/&gt;Migration PAUSED&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="805" y="360" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Phase 4: SEGURIDAD -->
+        <mxCell id="p3-ph4" value="&lt;b style=&quot;color:#f85149;font-size:14px;&quot;&gt;④ SEGURIDAD&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph4-agent" value="&lt;span style=&quot;color:#f85149;font-size:10px;&quot;&gt;security-audit-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph4-tools" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;Security Checks&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;scan_file_for_secrets&lt;br/&gt;check_pii_handling&lt;br/&gt;check_sql_injection&lt;br/&gt;audit_salesforce_permissions&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="160" width="310" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph4-gate" value="&lt;b style=&quot;color:#f85149;font-size:13px;&quot;&gt;⛔ GATE&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#f85149;font-size:11px;&quot;&gt;0 critical + 0 high = PASS&lt;br/&gt;Any critical/high = BLOCKED&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#3d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="280" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph4-soql" value="&lt;b style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;SOQL Injection Check&lt;br/&gt;PII Handling Validation&lt;br/&gt;TLS Configuration&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="1185" y="370" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Phase 5: CARGA SF -->
+        <mxCell id="p3-ph5" value="&lt;b style=&quot;color:#00a1e0;font-size:14px;&quot;&gt;⑤ CARGA SF&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#003d5c;strokeColor=#00a1e0;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1540" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph5-agent" value="&lt;span style=&quot;color:#00a1e0;font-size:10px;&quot;&gt;migration-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1540" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph5-bulk" value="&lt;b style=&quot;color:#00a1e0;font-size:11px;&quot;&gt;Bulk API 2.0&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;1. Create ingest job&lt;br/&gt;2. Upload CSV chunks&lt;br/&gt;3. Close job&lt;br/&gt;4. Poll until complete&lt;br/&gt;5. Fetch results&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#003d5c;strokeColor=#00a1e0;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="160" width="310" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph5-retry" value="&lt;b style=&quot;color:#c9d1d9;font-size:11px;&quot;&gt;retry_failed_records&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;Max 5000 records/call&lt;br/&gt;migration_record_errors&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="290" width="310" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Phase 6: VERIFICACIÓN -->
+        <mxCell id="p3-ph6" value="&lt;b style=&quot;color:#ffd700;font-size:14px;&quot;&gt;⑥ VERIFICACIÓN&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="1920" y="80" width="360" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph6-agent" value="&lt;span style=&quot;color:#ffd700;font-size:10px;&quot;&gt;orchestrator-agent&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1920" y="130" width="360" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph6-compare" value="&lt;b style=&quot;color:#ffd700;font-size:11px;&quot;&gt;Source vs SF Comparison&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Record count reconciliation&lt;br/&gt;MigrationLog__c record&lt;br/&gt;Halcon metrics emit&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;" vertex="1" parent="1">
+          <mxGeometry x="1945" y="160" width="310" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-ph6-incident" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;Incident Creation&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;PagerDuty/ServiceNow&lt;br/&gt;P1-P4 severity&lt;br/&gt;If errors detected&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="1945" y="280" width="310" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Phase arrows -->
+        <mxCell id="p3-arr-12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#8957e5;strokeWidth=2;fillColor=#8957e5;" edge="1" source="p3-ph1" target="p3-ph2" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-arr-23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#58a6ff;strokeWidth=2;fillColor=#58a6ff;" edge="1" source="p3-ph2" target="p3-ph3" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-arr-34" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3fb950;strokeWidth=2;fillColor=#3fb950;" edge="1" source="p3-ph3" target="p3-ph4" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-arr-45" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#f85149;strokeWidth=2;fillColor=#f85149;" edge="1" source="p3-ph4" target="p3-ph5" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-arr-56" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00a1e0;strokeWidth=2;fillColor=#00a1e0;" edge="1" source="p3-ph5" target="p3-ph6" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- ROLLBACK arrow -->
+        <mxCell id="p3-rollback" value="ROLLBACK" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#f85149;strokeWidth=2;fillColor=#f85149;fontColor=#f85149;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" source="p3-ph5" target="p3-ph4" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1720" y="700"/>
+              <mxPoint x="1340" y="700"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <!-- DB Tables row -->
+        <mxCell id="p3-db1" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;migration_runs&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Run lifecycle tracking&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="400" y="770" width="280" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-db2" value="&lt;b style=&quot;color:#3fb950;font-size:11px;&quot;&gt;migration_batch_jobs&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Batch status tracking&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="870" y="770" width="280" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3-db3" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;migration_record_errors&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Error log per record&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#30363d;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="770" width="280" height="60" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page4" name="04 — Seguridad y Cumplimiento">
+    <mxGraphModel dx="1654" dy="1169" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="0" background="#0d1117">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Header -->
+        <mxCell id="p4-header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1654" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-logo" value="&lt;b style=&quot;font-size:20px;color:#ffd700;&quot;&gt;CUERVO&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-title" value="&lt;b style=&quot;font-size:18px;color:#ffffff;&quot;&gt;04 — SEGURIDAD Y CUMPLIMIENTO&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="500" y="10" width="700" height="40" as="geometry"/>
+        </mxCell>
+        <!-- Onion Layers — outermost to innermost -->
+        <!-- Layer 1: TLS Perimeter -->
+        <mxCell id="p4-l1" value="&lt;b style=&quot;color:#8b949e;font-size:12px;&quot;&gt;PERÍMETRO — TLS 1.3 / mTLS&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#8b949e;strokeWidth=3;opacity=80;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="120" y="70" width="1180" height="860" as="geometry"/>
+        </mxCell>
+        <!-- Layer 2: Identity -->
+        <mxCell id="p4-l2" value="&lt;b style=&quot;color:#8957e5;font-size:12px;&quot;&gt;IDENTIDAD — SPIRE / SVID / X.509&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#8957e5;strokeWidth=3;opacity=80;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="190" y="120" width="1040" height="760" as="geometry"/>
+        </mxCell>
+        <!-- Layer 3: Secrets -->
+        <mxCell id="p4-l3" value="&lt;b style=&quot;color:#ffd700;font-size:12px;&quot;&gt;SECRETOS — HashiCorp Vault Agent&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;strokeWidth=3;opacity=80;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="260" y="170" width="900" height="660" as="geometry"/>
+        </mxCell>
+        <!-- Layer 4: Authorization -->
+        <mxCell id="p4-l4" value="&lt;b style=&quot;color:#e6822e;font-size:12px;&quot;&gt;AUTORIZACIÓN — OPA / RBAC&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;strokeWidth=3;opacity=80;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="330" y="220" width="760" height="560" as="geometry"/>
+        </mxCell>
+        <!-- Layer 5: AI Agents -->
+        <mxCell id="p4-l5" value="&lt;b style=&quot;color:#58a6ff;font-size:12px;&quot;&gt;AGENTES IA&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=3;opacity=80;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="400" y="270" width="620" height="460" as="geometry"/>
+        </mxCell>
+        <!-- Core: Data -->
+        <mxCell id="p4-core" value="&lt;b style=&quot;color:#ffffff;font-size:13px;&quot;&gt;DATOS&lt;br/&gt;CUI/PII/PHI&lt;br/&gt;AES-256-GCM&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#f85149;font-size:10px;&quot;&gt;encryption_service.py&lt;/span&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#3d0d0d;strokeColor=#f85149;strokeWidth=3;" vertex="1" parent="1">
+          <mxGeometry x="600" y="400" width="220" height="160" as="geometry"/>
+        </mxCell>
+        <!-- Agent boxes inside Layer 5 -->
+        <mxCell id="p4-ag1" value="&lt;span style=&quot;color:#ffd700;font-size:9px;&quot;&gt;orchestrator&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a2d1a;strokeColor=#ffd700;" vertex="1" parent="1">
+          <mxGeometry x="430" y="310" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-ag2" value="&lt;span style=&quot;color:#58a6ff;font-size:9px;&quot;&gt;migration&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="560" y="310" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-ag3" value="&lt;span style=&quot;color:#3fb950;font-size:9px;&quot;&gt;validation&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;" vertex="1" parent="1">
+          <mxGeometry x="690" y="310" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-ag4" value="&lt;span style=&quot;color:#f85149;font-size:9px;&quot;&gt;security&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="820" y="310" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <mxCell id="p4-ag5" value="&lt;span style=&quot;color:#d2a8ff;font-size:9px;&quot;&gt;documentation&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#d2a8ff;" vertex="1" parent="1">
+          <mxGeometry x="950" y="310" width="110" height="35" as="geometry"/>
+        </mxCell>
+        <!-- Left Panel: Audit Trail -->
+        <mxCell id="p4-audit" value="&lt;b style=&quot;color:#58a6ff;font-size:12px;&quot;&gt;AUDIT TRAIL&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;HMAC-chained events&lt;br/&gt;Splunk sink&lt;br/&gt;audit_logger.py&lt;br/&gt;Tamper-evident log&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="20" y="350" width="180" height="130" as="geometry"/>
+        </mxCell>
+        <!-- Right Panel: Prompt Injection Scanner -->
+        <mxCell id="p4-scanner" value="&lt;b style=&quot;color:#f85149;font-size:12px;&quot;&gt;PROMPT INJECTION&lt;br/&gt;SCANNER&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;IGNORE PREVIOUS...&lt;br/&gt;[SYSTEM]&lt;br/&gt;&amp;lt;|im_start|&amp;gt;&lt;br/&gt;Patterns blocked&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="350" width="180" height="130" as="geometry"/>
+        </mxCell>
+        <!-- Bottom: Data Policies -->
+        <mxCell id="p4-policies" value="&lt;b style=&quot;color:#e6822e;font-size:12px;&quot;&gt;POLÍTICAS DE DATOS&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;SOQL allowlist: SELECT only&lt;br/&gt;Path whitelist: PROJECT_ROOT&lt;br/&gt;Rate limits per agent: 10/run&lt;br/&gt;Token budget: 200K/session&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="550" y="780" width="320" height="100" as="geometry"/>
+        </mxCell>
+        <!-- FedRAMP Controls -->
+        <mxCell id="p4-fedramp" value="&lt;b style=&quot;color:#58a6ff;font-size:12px;&quot;&gt;FedRAMP High Controls&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;AC-2 Account Mgmt&lt;br/&gt;AC-3 Access Enforcement&lt;br/&gt;AU-2 Audit Events&lt;br/&gt;AU-9 Audit Protection&lt;br/&gt;IA-2 Identification&lt;br/&gt;SC-8 Transmission Security&lt;br/&gt;SC-13 Cryptography&lt;br/&gt;SI-3 Malicious Code&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="20" y="560" width="200" height="200" as="geometry"/>
+        </mxCell>
+        <!-- FISMA Controls -->
+        <mxCell id="p4-fisma" value="&lt;b style=&quot;color:#39c5cf;font-size:12px;&quot;&gt;FISMA Moderate&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;RA-5 Vulnerability Scan&lt;br/&gt;SA-11 Dev Testing&lt;br/&gt;SI-2 Flaw Remediation&lt;br/&gt;SI-7 Software Integrity&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0a1f1f;strokeColor=#39c5cf;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1430" y="560" width="200" height="150" as="geometry"/>
+        </mxCell>
+        <!-- Footer -->
+        <mxCell id="p4-footer" value="&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;CLASIFICACIÓN: CONFIDENCIAL | USO INTERNO | © 2026 CUERVO ENTERPRISE SOLUTIONS&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=#161b22;" vertex="1" parent="1">
+          <mxGeometry x="0" y="1130" width="1654" height="39" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="page5" name="05 — Infraestructura y Despliegue">
+    <mxGraphModel dx="1900" dy="1300" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1300" math="0" shadow="0" background="#0d1117">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- Header -->
+        <mxCell id="p5-header" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1900" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-logo" value="&lt;b style=&quot;font-size:20px;color:#ffd700;&quot;&gt;CUERVO&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="120" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-title" value="&lt;b style=&quot;font-size:18px;color:#ffffff;&quot;&gt;05 — INFRAESTRUCTURA Y DESPLIEGUE&lt;/b&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="600" y="10" width="700" height="40" as="geometry"/>
+        </mxCell>
+        <!-- CI/CD Pipeline top -->
+        <mxCell id="p5-cicd" value="&lt;b style=&quot;color:#c9d1d9;font-size:12px;&quot;&gt;GitHub Actions CI/CD Pipeline&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;pytest → build → push → deploy&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="700" y="70" width="500" height="60" as="geometry"/>
+        </mxCell>
+        <!-- AWS GovCloud boundary -->
+        <mxCell id="p5-aws" value="&lt;b style=&quot;color:#f85149;font-size:13px;&quot;&gt;AWS GOVCLOUD (US-GOV-WEST-1)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0808;strokeColor=#f85149;strokeWidth=3;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="150" y="150" width="1420" height="880" as="geometry"/>
+        </mxCell>
+        <!-- EKS Cluster boundary -->
+        <mxCell id="p5-eks" value="&lt;b style=&quot;color:#58a6ff;font-size:13px;&quot;&gt;EKS CLUSTER — lsmp-production&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;strokeWidth=2;verticalAlign=top;" vertex="1" parent="1">
+          <mxGeometry x="170" y="200" width="1130" height="810" as="geometry"/>
+        </mxCell>
+        <!-- Agent Pods -->
+        <mxCell id="p5-pod-orch" value="&lt;b style=&quot;color:#ffd700;font-size:11px;&quot;&gt;orchestrator-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;lsmp/orchestrator:latest&lt;br/&gt;CPU: 2 | RAM: 4GB&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a2d1a;strokeColor=#ffd700;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="200" y="250" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-pod-mig" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;migration-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;lsmp/migration:latest&lt;br/&gt;CPU: 1 | RAM: 2GB&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="410" y="250" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-pod-val" value="&lt;b style=&quot;color:#3fb950;font-size:11px;&quot;&gt;validation-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;lsmp/validation:latest&lt;br/&gt;CPU: 1 | RAM: 2GB&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;" vertex="1" parent="1">
+          <mxGeometry x="620" y="250" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-pod-sec" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;security-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;lsmp/security:latest&lt;br/&gt;CPU: 1 | RAM: 2GB&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="830" y="250" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-pod-docs" value="&lt;b style=&quot;color:#d2a8ff;font-size:11px;&quot;&gt;docs-agent&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;lsmp/docs:latest&lt;br/&gt;CPU: 1 | RAM: 2GB&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1a0d2e;strokeColor=#d2a8ff;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="250" width="180" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Service Pods -->
+        <mxCell id="p5-api" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;Migration Control API&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;FastAPI | Port: 8000&lt;br/&gt;/api/v1/migrations&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="200" y="400" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-sf-conn" value="&lt;b style=&quot;color:#00a1e0;font-size:11px;&quot;&gt;SF Connector&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Bulk API 2.0 adapter&lt;br/&gt;Port: 9001&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#003d5c;strokeColor=#00a1e0;" vertex="1" parent="1">
+          <mxGeometry x="490" y="400" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-dashboard" value="&lt;b style=&quot;color:#e6822e;font-size:11px;&quot;&gt;Dashboard&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Migration UI&lt;br/&gt;Port: 8080&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;" vertex="1" parent="1">
+          <mxGeometry x="780" y="400" width="250" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Data Layer -->
+        <mxCell id="p5-data-label" value="&lt;b style=&quot;color:#8b949e;font-size:11px;&quot;&gt;DATA LAYER&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="530" width="150" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-pg" value="&lt;b style=&quot;color:#58a6ff;font-size:11px;&quot;&gt;PostgreSQL 15.6&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;legacy_db + sfmigration&lt;br/&gt;Port: 5432&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f3c;strokeColor=#58a6ff;" vertex="1" parent="1">
+          <mxGeometry x="200" y="565" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-redis" value="&lt;b style=&quot;color:#f85149;font-size:11px;&quot;&gt;Redis 7.2&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Session cache&lt;br/&gt;Port: 6379&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d0d0d;strokeColor=#f85149;" vertex="1" parent="1">
+          <mxGeometry x="450" y="565" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-kafka" value="&lt;b style=&quot;color:#e6822e;font-size:11px;&quot;&gt;Kafka&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Event streaming&lt;br/&gt;migration.events topic&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;" vertex="1" parent="1">
+          <mxGeometry x="700" y="565" width="220" height="80" as="geometry"/>
+        </mxCell>
+        <!-- Monitoring Stack (right side of EKS) -->
+        <mxCell id="p5-mon-label" value="&lt;b style=&quot;color:#8b949e;font-size:11px;&quot;&gt;MONITORING&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;strokeColor=none;fillColor=none;" vertex="1" parent="1">
+          <mxGeometry x="200" y="700" width="150" height="25" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-prom" value="&lt;b style=&quot;color:#e6822e;font-size:11px;&quot;&gt;Prometheus&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Metrics scraping&lt;br/&gt;Port: 9090&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;" vertex="1" parent="1">
+          <mxGeometry x="200" y="735" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-grafana" value="&lt;b style=&quot;color:#e6822e;font-size:11px;&quot;&gt;Grafana&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;Dashboards&lt;br/&gt;Port: 3000&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d1500;strokeColor=#e6822e;" vertex="1" parent="1">
+          <mxGeometry x="430" y="735" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-halcon" value="&lt;b style=&quot;color:#ffd700;font-size:11px;&quot;&gt;Halcon Emitter&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#8b949e;font-size:9px;&quot;&gt;.halcon/retrospectives/&lt;br/&gt;sessions.jsonl&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;" vertex="1" parent="1">
+          <mxGeometry x="660" y="735" width="200" height="70" as="geometry"/>
+        </mxCell>
+        <!-- Vault outside EKS -->
+        <mxCell id="p5-vault" value="&lt;b style=&quot;color:#ffd700;font-size:12px;&quot;&gt;HashiCorp Vault&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Vault Agent sidecar&lt;br/&gt;Token injection&lt;br/&gt;at pod startup&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#2d2200;strokeColor=#ffd700;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="250" width="180" height="110" as="geometry"/>
+        </mxCell>
+        <!-- Salesforce Gov Cloud+ external -->
+        <mxCell id="p5-sf-ext" value="&lt;b style=&quot;color:#00a1e0;font-size:12px;&quot;&gt;Salesforce&lt;br/&gt;Gov Cloud+&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;FedRAMP Authorized&lt;br/&gt;Bulk API 2.0&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#003d5c;strokeColor=#00a1e0;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="400" width="180" height="110" as="geometry"/>
+        </mxCell>
+        <!-- PagerDuty external -->
+        <mxCell id="p5-pd-ext" value="&lt;b style=&quot;color:#3fb950;font-size:12px;&quot;&gt;PagerDuty&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;Incident Mgmt&lt;br/&gt;P1-P4&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#0d1f0d;strokeColor=#3fb950;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1350" y="550" width="180" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Local Dev box -->
+        <mxCell id="p5-localdev" value="&lt;b style=&quot;color:#8b949e;font-size:12px;&quot;&gt;LOCAL DEV&lt;/b&gt;&lt;br/&gt;&lt;span style=&quot;color:#c9d1d9;font-size:10px;&quot;&gt;docker-compose&lt;br/&gt;make test | make run&lt;br/&gt;pytest tests/ -v&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#21262d;strokeColor=#30363d;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="20" y="950" width="220" height="110" as="geometry"/>
+        </mxCell>
+        <!-- Arrows -->
+        <mxCell id="p5-arr-cicd-eks" value="deploy" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#30363d;strokeWidth=2;fontColor=#8b949e;fontSize=10;" edge="1" source="p5-cicd" target="p5-eks" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-arr-eks-vault" value="secrets" style="edgeStyle=orthogonalEdgeStyle;rounded=1;dashed=1;strokeColor=#ffd700;strokeWidth=2;fontColor=#ffd700;fontSize=10;" edge="1" source="p5-eks" target="p5-vault" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-arr-eks-sf" value="Bulk API 2.0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#00a1e0;strokeWidth=2;fontColor=#00a1e0;fontSize=10;" edge="1" source="p5-eks" target="p5-sf-ext" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="p5-arr-eks-pd" value="incidents" style="edgeStyle=orthogonalEdgeStyle;rounded=1;strokeColor=#3fb950;strokeWidth=2;fontColor=#3fb950;fontSize=10;" edge="1" source="p5-eks" target="p5-pd-ext" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <!-- Footer -->
+        <mxCell id="p5-footer" value="&lt;span style=&quot;color:#8b949e;font-size:10px;&quot;&gt;CLASIFICACIÓN: CONFIDENCIAL | USO INTERNO | © 2026 CUERVO ENTERPRISE SOLUTIONS&lt;/span&gt;" style="text;html=1;align=center;verticalAlign=middle;strokeColor=none;fillColor=#161b22;" vertex="1" parent="1">
+          <mxGeometry x="0" y="1261" width="1900" height="39" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
