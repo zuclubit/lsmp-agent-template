@@ -1,0 +1,158 @@
+mcp_server:
+  name: api-server
+  version: "1.0.0"
+  transport: stdio
+  port: null  # stdio, not TCP
+  description: "Controlled proxy for migration API, Salesforce, Kafka, and Prometheus — enforces method allowlists and rate limits"
+  classification: RESTRICTED
+
+authentication:
+  required: true
+  method: service_token  # INTERNAL_SERVICE_TOKEN injected by Vault Agent sidecar
+  token_source: env:INTERNAL_SERVICE_TOKEN
+  token_validation: strict
+  # Tokens are NEVER logged, never returned in error messages
+
+privacy:
+  log_request_bodies: false   # request bodies may contain PII — never logged
+  log_response_bodies: false  # responses may contain customer records
+  log_request_path: true      # path only (no query params with PII)
+  log_http_method: true
+  log_status_code: true
+  log_agent_identity: true
+  log_latency_ms: true
+  pii_scrubbing_on_error_messages: true
+
+upstream_services:
+  migration-api:
+    base_url: "${MIGRATION_API_BASE_URL}"  # injected at runtime
+    internal: true
+    tls: required
+    tls_verify: true
+    timeout_seconds: 30
+    connect_timeout_seconds: 5
+    rate_limit:
+      requests_per_minute: 500
+      burst: 50
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 3      # 3 consecutive failures → OPEN
+      success_threshold: 2      # 2 consecutive successes → CLOSED (half-open)
+      open_duration_seconds: 30
+      half_open_probe_interval_seconds: 10
+    allowed_methods: [GET, POST]
+    allowed_paths:
+      - "GET /api/v1/migrations/runs/{run_id}"
+      - "GET /api/v1/migrations/runs/{run_id}/status"
+      - "GET /api/v1/migrations/runs/{run_id}/validation"
+      - "GET /api/v1/migrations/runs/{run_id}/errors"
+      - "GET /api/v1/migrations/runs/{run_id}/batch"
+      - "GET /api/v1/integrations/salesforce/limits"
+      - "GET /api/v1/health"
+      - "POST /api/v1/migrations/runs/{run_id}/pause"
+      - "POST /api/v1/migrations/runs/{run_id}/resume"
+      - "POST /api/v1/migrations/runs/{run_id}/batch"
+      - "POST /api/v1/migrations/runs/{run_id}/batch-size"
+      - "POST /api/v1/migrations/retry"
+    blocked_paths:
+      - "DELETE /api/v1/migrations/runs/{run_id}"  # cancel requires confirm flag via agent tool — never raw DELETE
+      - "/api/v1/admin/*"
+      - "/api/v1/rbac/*"
+      - "/api/v1/vault/*"
+
+  salesforce:
+    base_url: "${SALESFORCE_INSTANCE_URL}"
+    internal: false
+    tls: required
+    tls_verify: true
+    timeout_seconds: 60
+    connect_timeout_seconds: 10
+    rate_limit:
+      requests_per_minute: 100
+      burst: 10
+      daily_limit_header: "Sforce-Limit-Info"  # monitor and alert when <10% remaining
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 3
+      success_threshold: 2
+      open_duration_seconds: 60
+      half_open_probe_interval_seconds: 15
+    allowed_methods: [GET, POST]
+    allowed_paths:
+      - "GET /services/data/v58.0/jobs/ingest/{job_id}"
+      - "GET /services/data/v58.0/jobs/ingest/{job_id}/successfulResults"
+      - "GET /services/data/v58.0/jobs/ingest/{job_id}/failedResults"
+      - "GET /services/data/v58.0/jobs/ingest/{job_id}/unprocessedrecords"
+      - "GET /services/data/v58.0/limits"
+      - "POST /services/data/v58.0/jobs/ingest"
+      - "POST /services/data/v58.0/jobs/ingest/{job_id}/batches"
+    blocked_operations:
+      soql_dml:
+        - DELETE
+        - UPDATE
+        - INSERT
+        - UPSERT
+        - MERGE
+        - DROP
+        - GRANT
+        - CREATE
+      note: "All DML is handled exclusively via Bulk API 2.0 batch endpoint — never via SOQL passthrough"
+
+  kafka-connect:
+    base_url: "${KAFKA_CONNECT_BASE_URL}"
+    internal: true
+    tls: required
+    timeout_seconds: 15
+    rate_limit:
+      requests_per_minute: 120
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 3
+      open_duration_seconds: 30
+    allowed_methods: [GET]
+    allowed_paths:
+      - "GET /connectors/{connector}/status"
+      - "GET /connectors/{connector}/offsets"
+      - "GET /connectors"
+
+  prometheus:
+    base_url: "${PROMETHEUS_BASE_URL}"
+    internal: true
+    tls: required
+    timeout_seconds: 10
+    rate_limit:
+      requests_per_minute: 200
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5
+      open_duration_seconds: 15
+    allowed_methods: [GET]
+    allowed_paths:
+      - "GET /api/v1/query"
+      - "GET /api/v1/query_range"
+      - "GET /api/v1/series"
+      - "GET /api/v1/labels"
+    circuit_breaker_state_visibility: monitoring_only  # circuit state NOT exposed to agent model
+
+circuit_breaker_global:
+  state_endpoint: "internal://circuit-breaker/state"
+  visibility: monitoring_only  # never surfaced to agent model — only to monitoring/agent_observability.py
+  alert_on_open: true
+  alert_channel: ops-team
+
+human_in_the_loop:
+  require_approval_for:
+    - operation: "POST /api/v1/migrations/runs/{run_id}/pause"
+      condition: "run.total_records > 1000000"
+    - operation: "POST /api/v1/migrations/runs/{run_id}/resume"
+      condition: "run.total_records > 1000000"
+    - operation: "POST /api/v1/migrations/runs/{run_id}/batch"
+      condition: "run.total_records > 1000000"
+
+audit:
+  log_all_requests: true
+  log_circuit_breaker_events: true
+  log_rate_limit_violations: true
+  log_blocked_operations: true
+  log_human_approval_events: true
+  sink: audit_logger  # security/audit/audit_logger.py

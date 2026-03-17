@@ -1,0 +1,251 @@
+version: "1.0.0"
+description: "Halcon agent permission matrix — defines which agent can invoke which, with conditions"
+schema_version: "halcon/v2"
+last_updated: "2026-03-17"
+
+# All agent-to-agent transitions are DENY unless explicitly listed below.
+# This is enforced at the Halcon dispatcher layer before any invocation is routed.
+default_policy: DENY
+
+# ---------------------------------------------------------------------------
+# Agent Permissions
+# ---------------------------------------------------------------------------
+agent_permissions:
+
+  orchestrator-agent:
+    description: "Supervisor agent — coordinates all specialist agents"
+    can_invoke:
+
+      - agent: planning-agent
+        condition: always
+        max_concurrent: 1
+        timeout_seconds: 60
+        note: "Planning is always the first delegated step; no preconditions"
+
+      - agent: validation-agent
+        condition: "planning_complete == true"
+        max_concurrent: 1
+        timeout_seconds: 180
+        note: "Validation gates block migration execution; must run after plan exists"
+
+      - agent: security-agent
+        condition: "planning_complete == true"
+        max_concurrent: 1
+        timeout_seconds: 120
+        note: "Runs in parallel with validation-agent when plan is ready"
+        parallel_with: [validation-agent]
+
+      - agent: execution-agent
+        condition: "validation_gate == ALLOW AND security_gate == ALLOW"
+        max_concurrent: 1
+        timeout_seconds: 3600
+        human_confirmation_required_for: [ROLLBACK, HIGH_RISK]
+        note: >
+          Both validation AND security gates must pass before execution begins.
+          Human confirmation required for ROLLBACK or HIGH_RISK plans (>1M records
+          or risk_level == HIGH).
+
+      - agent: debugging-agent
+        condition: "execution_failed == true OR stall_detected == true"
+        max_concurrent: 1
+        timeout_seconds: 300
+        note: "Debugging is read-only; invoked on failure or detected stall"
+
+    cannot_invoke:
+      - orchestrator-agent  # no self-invocation — would create unbounded recursion
+
+    receive_from:
+      - planning-agent
+      - validation-agent
+      - security-agent
+      - execution-agent
+      - debugging-agent
+
+    invocation_limits:
+      max_total_per_orchestration_run: 10  # matches CLAUDE.md rule #9
+      max_parallel_at_once: 3
+
+  # ---------------------------------------------------------------------------
+  planning-agent:
+    description: "Builds execution plan — terminal specialist, returns to orchestrator only"
+    can_invoke: []
+    cannot_invoke:
+      - orchestrator-agent
+      - validation-agent
+      - security-agent
+      - execution-agent
+      - debugging-agent
+    receive_from:
+      - orchestrator-agent
+    note: "Planning is always terminal. Its sole output is the execution_plan returned to orchestrator."
+
+  # ---------------------------------------------------------------------------
+  validation-agent:
+    description: "Data quality gating — gate1 (source), gate2 (target), gate3 (post-load)"
+    can_invoke: []
+    cannot_invoke:
+      - orchestrator-agent
+      - planning-agent
+      - security-agent
+      - execution-agent
+      - debugging-agent
+    receive_from:
+      - orchestrator-agent
+    note: >
+      Validation is read-only against source and target systems.
+      It never invokes other agents — returns ValidationResult to orchestrator.
+      Grade D or F result forces orchestrator gate to BLOCK.
+
+  # ---------------------------------------------------------------------------
+  security-agent:
+    description: "OWASP scan, secrets detection, CVE checks, SOQL audit"
+    can_invoke: []
+    cannot_invoke:
+      - orchestrator-agent
+      - planning-agent
+      - validation-agent
+      - execution-agent
+      - debugging-agent
+    receive_from:
+      - orchestrator-agent
+    note: >
+      Security is read-only. Any CRITICAL or HIGH finding sets pass_security_gate=false.
+      Must complete before execution-agent is invoked.
+
+  # ---------------------------------------------------------------------------
+  execution-agent:
+    description: "Executes data migration in chunks via Kafka pipeline"
+    can_invoke:
+      - agent: debugging-agent
+        condition: "step_failed == true"
+        max_concurrent: 1
+        timeout_seconds: 300
+        note: "Execution-agent may invoke debugging-agent directly on step failure to capture immediate context"
+
+    cannot_invoke:
+      - orchestrator-agent
+      - planning-agent
+      - validation-agent
+      - security-agent
+    receive_from:
+      - orchestrator-agent
+    note: >
+      Execution-agent is the only non-orchestrator agent that can invoke another specialist.
+      This is limited strictly to debugging-agent on step failure.
+      All other control flow returns to orchestrator.
+
+  # ---------------------------------------------------------------------------
+  debugging-agent:
+    description: "Read-only diagnostic agent — triage, RCA, remediation recommendations"
+    can_invoke: []
+    cannot_invoke:
+      - orchestrator-agent
+      - planning-agent
+      - validation-agent
+      - security-agent
+      - execution-agent
+    receive_from:
+      - orchestrator-agent
+      - execution-agent
+    note: >
+      Debugging-agent is strictly read-only. It produces reports and recommendations
+      only. It never triggers execution, rollback, or state changes.
+
+# ---------------------------------------------------------------------------
+# Isolation Rules
+# ---------------------------------------------------------------------------
+isolation:
+  shared_state: FORBIDDEN
+  cross_tenant_invocation: FORBIDDEN
+  context_inheritance: EXPLICIT_ONLY
+  context_inheritance_note: >
+    Orchestrator must explicitly pass context fields to each sub-agent invocation.
+    Sub-agents cannot read each other's conversation history or internal state.
+    Tool results from one agent are never automatically injected into another agent's prompt.
+
+# ---------------------------------------------------------------------------
+# Failure Handling
+# ---------------------------------------------------------------------------
+failure_handling:
+  max_retries_per_agent: 2
+  retry_backoff_seconds: [5, 30]
+
+  circuit_breaker:
+    threshold: 3           # consecutive failures before circuit opens
+    reset_seconds: 60      # time before circuit half-opens for retry
+    affects_agents: [validation-agent, security-agent, execution-agent, debugging-agent]
+    note: "orchestrator-agent and planning-agent are excluded — failures there always escalate immediately"
+
+  on_agent_timeout:
+    action: ABORT_AND_ALERT
+    alert_channel: pagerduty
+    alert_severity: P2
+    log_level: ERROR
+
+  on_gate_block:
+    action: HALT_PIPELINE
+    notify: [ops-team, migration-lead]
+    log_level: ERROR
+    write_halcon_retrospective: true
+
+  on_security_critical:
+    action: HALT_PIPELINE
+    notify: [security-team, ops-team]
+    log_level: CRITICAL
+    create_incident: true
+    incident_severity: P1
+
+  on_validation_grade_f:
+    action: HALT_PIPELINE
+    notify: [ops-team, migration-lead]
+    log_level: ERROR
+
+  on_max_invocations_reached:
+    action: ABORT_AND_ALERT
+    alert_channel: pagerduty
+    message: "Max agent invocations (10) reached in orchestration run. Aborting to prevent runaway."
+
+# ---------------------------------------------------------------------------
+# Human-in-the-Loop Gates
+# ---------------------------------------------------------------------------
+human_in_the_loop:
+  required_for:
+    - trigger: "execution-agent invoked with record_count > 1000000"
+      reason: "CLAUDE.md rule #10: migrations of >1M records require explicit human approval"
+      confirmation_timeout_minutes: 60
+      on_timeout: CANCEL
+      notify: [pagerduty, slack-migration-oncall]
+
+    - trigger: "security_finding.severity == CRITICAL"
+      reason: "CLAUDE.md rule #10: CRITICAL security findings require human approval before action"
+      confirmation_timeout_minutes: 30
+      on_timeout: BLOCK
+      notify: [pagerduty, slack-security-channel]
+
+    - trigger: "rollback requested"
+      reason: "Rollback is irreversible — requires confirmed operator intent"
+      confirmation_timeout_minutes: 30
+      on_timeout: BLOCK
+      notify: [pagerduty, slack-migration-oncall]
+
+    - trigger: "cancel_migration called"
+      reason: "CLAUDE.md critical rule #1: cancel_migration requires confirm: true and explicit human approval"
+      requires_field: "confirm: true"
+      confirmation_timeout_minutes: 15
+      on_timeout: BLOCK
+      notify: [pagerduty, slack-migration-oncall, email-migration-lead]
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+audit:
+  log_all_invocations: true
+  log_gate_decisions: true
+  log_agent_transitions: true
+  log_failure_reasons: true
+  log_human_approvals: true
+  log_permission_denials: true
+  retention_days: 90
+  cold_archive_years: 7
+  sink: splunk
+  hmac_chain: enabled

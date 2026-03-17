@@ -1,0 +1,305 @@
+version: "1.0.0"
+description: "Universal redaction rules applied to all agent outputs, tool results, and logs"
+schema_version: "redaction/v1"
+last_updated: "2026-03-17"
+apply_to:
+  - agent_outputs
+  - tool_results
+  - mcp_responses
+  - context_injections
+  - audit_logs
+  - halcon_retrospectives
+  - splunk_events
+
+# ---------------------------------------------------------------------------
+# Rules — evaluated in id order. BLOCK rules are evaluated before REDACT.
+# Within BLOCK and REDACT groups, lower id = higher priority.
+# ---------------------------------------------------------------------------
+rules:
+
+  # ==========================================================================
+  # INJECTION PATTERNS — action: BLOCK (evaluated first, before any redaction)
+  # ==========================================================================
+
+  - id: RR-040
+    name: prompt_injection_ignore_instructions
+    description: "Detect classic 'ignore previous instructions' prompt injection"
+    pattern: "(?i)(ignore\\s+(previous|prior|above|all)\\s+instructions|forget\\s+(everything|all)|new\\s+instructions\\s*:)"
+    replacement: null
+    severity: CRITICAL
+    action: BLOCK
+    alert: true
+    log_full_input: false    # never log plaintext — log SHA-256 hash only
+    log_blocked_hash: true
+
+  - id: RR-041
+    name: prompt_injection_system_override
+    description: "Detect system-role override attempts via special tokens"
+    pattern: "(?i)(\\[SYSTEM\\]|<\\|im_start\\||\\[INST\\]|<system>|<\\|system\\|>|<\\|im_end\\||\\[/INST\\])"
+    replacement: null
+    severity: CRITICAL
+    action: BLOCK
+    alert: true
+    log_full_input: false
+    log_blocked_hash: true
+
+  - id: RR-042
+    name: soql_dml_injection
+    description: "Block DML/DDL SOQL statements — SELECT only is permitted"
+    pattern: "(?i)\\b(DELETE\\s+FROM|UPDATE\\s+\\w+\\s+SET|INSERT\\s+INTO|DROP\\s+TABLE|DROP\\s+OBJECT|CREATE\\s+TABLE|CREATE\\s+OBJECT|MERGE\\s+INTO|GRANT\\s+|TRUNCATE\\s+TABLE|TRUNCATE\\s+OBJECT|REVOKE\\s+)\\b"
+    replacement: null
+    severity: CRITICAL
+    action: BLOCK
+    alert: true
+    log_full_input: false
+    log_blocked_hash: true
+
+  - id: RR-043
+    name: prompt_injection_persona_override
+    description: "Detect attempts to override agent persona or role"
+    pattern: "(?i)(you\\s+are\\s+now\\s+(?:a\\s+)?(?:different|new|another|evil|jailbreak)|pretend\\s+you\\s+are|act\\s+as\\s+(?:a\\s+)?(?:different|new|another)|from\\s+now\\s+on\\s+you\\s+(?:will|must|shall)|roleplay\\s+as)"
+    replacement: null
+    severity: CRITICAL
+    action: BLOCK
+    alert: true
+    log_full_input: false
+    log_blocked_hash: true
+
+  - id: RR-044
+    name: path_traversal_attempt
+    description: "Block path traversal sequences in file path inputs"
+    pattern: "(?i)(\\.\\.[\\/\\\\]|[\\/\\\\]\\.\\.[\\/\\\\]|%2e%2e[\\/\\\\]|\\.\\.%2f|\\.\\.%5c)"
+    replacement: null
+    severity: CRITICAL
+    action: BLOCK
+    alert: true
+    log_full_input: false
+    log_blocked_hash: true
+
+  # ==========================================================================
+  # CREDENTIALS — action: REDACT, severity: CRITICAL
+  # ==========================================================================
+
+  - id: RR-001
+    name: anthropic_api_key
+    description: "Redact Anthropic API keys (sk-ant- prefix)"
+    pattern: "sk-ant-[A-Za-z0-9\\-_]{20,}"
+    replacement: "[REDACTED:ANTHROPIC_KEY]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-002
+    name: salesforce_token
+    description: "Redact Salesforce access tokens and session tokens"
+    pattern: "(?i)(sf_token|salesforce_token|access_token|session_id)[\"']?\\s*[=:]\\s*[\"']?[A-Za-z0-9!.]{20,}"
+    replacement: "[REDACTED:SF_TOKEN]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-003
+    name: vault_token
+    description: "Redact HashiCorp Vault tokens (hvs. prefix and generic vault_token references)"
+    pattern: "(?i)(vault_token[\"']?\\s*[=:]\\s*[\"']?[A-Za-z0-9.\\-_]{8,}|hvs\\.[A-Za-z0-9]{24,}|hvb\\.[A-Za-z0-9]{24,})"
+    replacement: "[REDACTED:VAULT_TOKEN]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-004
+    name: generic_api_key
+    description: "Redact generic API keys by field name heuristic"
+    pattern: "(?i)(api_key|apikey|x-api-key|api-key)[\"']?\\s*[=:]\\s*[\"']?[A-Za-z0-9+/=\\-_]{16,}"
+    replacement: "[REDACTED:API_KEY]"
+    severity: HIGH
+    action: REDACT
+    alert: false
+
+  - id: RR-005
+    name: private_key_block
+    description: "Redact PEM-encoded private keys"
+    pattern: "-----BEGIN\\s+(?:RSA\\s+|EC\\s+|DSA\\s+|OPENSSH\\s+|ENCRYPTED\\s+)?PRIVATE\\s+KEY-----[\\s\\S]+?-----END\\s+(?:RSA\\s+|EC\\s+|DSA\\s+|OPENSSH\\s+|ENCRYPTED\\s+)?PRIVATE\\s+KEY-----"
+    replacement: "[REDACTED:PRIVATE_KEY]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-006
+    name: database_connection_string
+    description: "Redact database connection strings with embedded credentials"
+    pattern: "(?i)(postgresql|postgres|mysql|mongodb|redis|mssql|oracle|sqlserver)://[^\\s\"'<>]+"
+    replacement: "[REDACTED:DB_CONNECTION_STRING]"
+    severity: HIGH
+    action: REDACT
+    alert: false
+
+  - id: RR-007
+    name: aws_access_key
+    description: "Redact AWS access key IDs"
+    pattern: "(?i)(AKIA|ASIA|AROA|AIDA|ANPA|ANVA|APKA)[A-Z0-9]{16}"
+    replacement: "[REDACTED:AWS_ACCESS_KEY]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-008
+    name: aws_secret_key
+    description: "Redact AWS secret access keys"
+    pattern: "(?i)(aws_secret_access_key|aws_secret_key)[\"']?\\s*[=:]\\s*[\"']?[A-Za-z0-9+/]{40}"
+    replacement: "[REDACTED:AWS_SECRET_KEY]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-009
+    name: jwt_token
+    description: "Redact JWT bearer tokens (eyJ header pattern)"
+    pattern: "eyJ[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+"
+    replacement: "[REDACTED:JWT_TOKEN]"
+    severity: HIGH
+    action: REDACT
+    alert: false
+
+  # ==========================================================================
+  # PII — action: REDACT, severity: CRITICAL/MEDIUM
+  # ==========================================================================
+
+  - id: RR-010
+    name: email_address
+    description: "Redact email addresses — may appear in migrated records or logs"
+    pattern: "\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}\\b"
+    replacement: "[EMAIL_REDACTED]"
+    severity: MEDIUM
+    action: REDACT
+    alert: false
+    exceptions:
+      field: system_email_domains
+      values:
+        - "@enterprise.gov"
+        - "@migration-platform.internal"
+      note: "System alert emails from known internal domains are permitted in logs"
+
+  - id: RR-011
+    name: us_ssn
+    description: "Redact US Social Security Numbers"
+    pattern: "\\b(?!000|666|9\\d{2})\\d{3}-(?!00)\\d{2}-(?!0000)\\d{4}\\b"
+    replacement: "[SSN_REDACTED]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-012
+    name: credit_card
+    description: "Redact major credit card numbers (Visa, MC, Amex, Discover)"
+    pattern: "\\b(?:4[0-9]{12}(?:[0-9]{3})?|(?:5[1-5][0-9]{2}|222[1-9]|22[3-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)[0-9]{12}|3[47][0-9]{13}|3(?:0[0-5]|[68][0-9])[0-9]{11}|6(?:011|5[0-9]{2})[0-9]{12}|(?:2131|1800|35\\d{3})\\d{11})\\b"
+    replacement: "[CREDIT_CARD_REDACTED]"
+    severity: CRITICAL
+    action: REDACT
+    alert: true
+
+  - id: RR-013
+    name: phone_number
+    description: "Redact phone numbers including international formats"
+    pattern: "(?:(?:\\+?1\\s*(?:[.-]\\s*)?)?(?:\\(\\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\\s*\\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\\s*(?:[.-]\\s*)?)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\\s*(?:[.-]\\s*)?([0-9]{4}))"
+    replacement: "[PHONE_REDACTED]"
+    severity: MEDIUM
+    action: REDACT
+    alert: false
+
+  - id: RR-014
+    name: date_of_birth
+    description: "Redact dates that appear in DOB context"
+    pattern: "(?i)(dob|date_of_birth|birth_date|birthdate)[\"']?\\s*[=:]\\s*[\"']?\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}"
+    replacement: "[DOB_REDACTED]"
+    severity: HIGH
+    action: REDACT
+    alert: false
+
+  - id: RR-015
+    name: us_ein
+    description: "Redact US Employer Identification Numbers"
+    pattern: "\\b\\d{2}-\\d{7}\\b"
+    replacement: "[EIN_REDACTED]"
+    severity: HIGH
+    action: REDACT
+    alert: false
+
+  # ==========================================================================
+  # SALESFORCE IDs — action: PARTIAL_MASK
+  # ==========================================================================
+
+  - id: RR-020
+    name: salesforce_record_id_18char
+    description: "Partially mask 18-character Salesforce record IDs — last 4 visible for correlation"
+    pattern: "\\b([A-Za-z0-9]{14})([A-Za-z0-9]{4})\\b"
+    replacement: "[SF_ID:***\\2]"
+    severity: LOW
+    action: PARTIAL_MASK
+    alert: false
+    note: >
+      Last 4 characters are preserved for incident correlation.
+      Full ID is never logged. Apply only in contexts where SF IDs are not
+      expected (e.g., free-text fields, prompts, log messages).
+
+  - id: RR-021
+    name: salesforce_record_id_15char
+    description: "Partially mask 15-character Salesforce record IDs — last 4 visible"
+    pattern: "\\b([A-Za-z0-9]{11})([A-Za-z0-9]{4})\\b"
+    replacement: "[SF_ID:***\\2]"
+    severity: LOW
+    action: PARTIAL_MASK
+    alert: false
+
+  # ==========================================================================
+  # HIGH-ENTROPY STRINGS — potential secrets, action: REDACT
+  # ==========================================================================
+
+  - id: RR-030
+    name: high_entropy_string
+    description: "Detect and redact high-entropy strings that may be hardcoded secrets"
+    type: entropy
+    threshold: 4.5          # Shannon entropy threshold (bits per character)
+    min_length: 16
+    max_length: 512
+    replacement: "[POTENTIAL_SECRET_REDACTED]"
+    severity: HIGH
+    action: REDACT
+    alert: true
+    exclusions:
+      - "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"  # UUIDs are ok
+      - "^[A-Za-z0-9+/]+=*$"   # base64 content fields (checked by context)
+    note: >
+      Entropy check applied after all pattern-based rules.
+      False-positive risk exists for legitimate base64 payloads and UUIDs —
+      exclusion patterns mitigate common cases.
+
+# ---------------------------------------------------------------------------
+# Alert Channels by Severity
+# ---------------------------------------------------------------------------
+alert_channels:
+  CRITICAL:
+    - pagerduty
+    - slack-security-channel
+    - splunk
+  HIGH:
+    - slack-security-channel
+    - splunk
+  MEDIUM:
+    - splunk
+  LOW:
+    - splunk
+
+# ---------------------------------------------------------------------------
+# Audit Configuration
+# ---------------------------------------------------------------------------
+audit:
+  log_redaction_counts_per_rule: true
+  log_blocked_inputs_hash: true          # SHA-256 of blocked content — never plaintext
+  log_blocked_inputs_plaintext: false    # explicitly forbidden
+  alert_on_critical_redaction: true
+  alert_on_repeated_blocks:
+    threshold_per_hour: 3
+    action: escalate_to_pagerduty
+    note: ">3 BLOCK decisions/hour triggers anomaly alert per audit_config.yaml"
+  retention_days: 90

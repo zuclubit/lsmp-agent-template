@@ -1,0 +1,57 @@
+mcp_server:
+  name: filesystem-server
+  version: "1.0.0"
+  transport: stdio
+  port: null  # stdio, not TCP
+  description: "Read-only access to whitelisted project directories"
+  classification: INTERNAL
+
+authentication:
+  required: true
+  method: spiffe_svid  # mTLS via SPIRE
+  token_validation: strict
+
+capabilities:
+  read_file: true
+  write_file: false
+  list_directory: true
+  search_files: true
+  execute: false
+
+allowed_paths:
+  - path: "./docs/"
+    access: read_only
+    classification: PUBLIC
+  - path: "./monitoring/runbooks/"
+    access: read_only
+    classification: INTERNAL
+  - path: "./architecture/"
+    access: read_only
+    classification: INTERNAL
+  - path: "./agents/"
+    access: read_only
+    classification: INTERNAL
+    excludes: ["**/prompts/", "**/.env*"]  # never expose prompts or env files
+
+forbidden_paths:
+  - /etc/
+  - /var/secrets/
+  - /run/secrets/
+  - ~/.ssh/
+  - ~/.aws/
+  - .env
+  - "**/*.pem"
+  - "**/*.key"
+  - "**/vault_token"
+  - "**/.claude/"
+
+rate_limiting:
+  requests_per_minute: 60
+  requests_per_agent_per_minute: 20
+  max_file_size_mb: 10
+
+audit:
+  log_all_reads: true
+  log_denied_access: true
+  log_agent_identity: true
+  sink: audit_logger  # goes to security/audit/audit_logger.py

@@ -1,0 +1,236 @@
+version: "1.0.0"
+description: >
+  Central registry mapping each agent to its allowed MCP servers and skills.
+  This is the single source of truth for all agent subscriptions.
+  Any agent/MCP/skill combination NOT listed here is DENIED by default.
+
+# ============================================================
+# MCP SERVER DEFINITIONS
+# ============================================================
+mcp_servers:
+  project-context-server:
+    module: context-servers/project-context/server.py
+    transport: stdio
+    port: 8100
+    classification: INTERNAL
+    capabilities: [get_architecture, get_api_spec, get_schemas, get_agent_config, search_project]
+    allowed_agents: [orchestrator-agent, planning-agent, security-agent, debugging-agent]
+
+  documentation-server:
+    module: context-servers/documentation-context/server.py
+    transport: stdio
+    port: 8101
+    classification: INTERNAL
+    capabilities: [search_docs, get_runbook, get_adr, list_docs]
+    allowed_agents: [orchestrator-agent, planning-agent, debugging-agent, documentation-agent]
+
+  runtime-context-server:
+    module: context-servers/runtime-context/server.py
+    transport: stdio
+    port: 8102
+    classification: RESTRICTED
+    capabilities: [get_job_status, get_metrics, get_error_report, get_kafka_lag]
+    allowed_agents: [orchestrator-agent, validation-agent, execution-agent, debugging-agent]
+
+  security-context-server:
+    module: context-servers/security-context/server.py
+    transport: stdio
+    port: 8103
+    classification: RESTRICTED
+    capabilities: [get_policies, get_svid_status, get_vault_secret_names, validate_path]
+    allowed_agents: [orchestrator-agent, security-agent]
+
+  filesystem-server:
+    module: mcp-servers/filesystem-server/server.yaml
+    transport: stdio
+    classification: INTERNAL
+    read_only: true
+    capabilities: [read_file, list_directory, search_files]
+    allowed_agents: [security-agent]  # ONLY security agent
+
+  api-server:
+    module: mcp-servers/api-server/server.yaml
+    transport: stdio
+    classification: RESTRICTED
+    capabilities: [call_migration_api, call_salesforce_api, call_prometheus]
+    allowed_agents: [orchestrator-agent, validation-agent, execution-agent, debugging-agent]
+
+  memory-server:
+    module: mcp-servers/memory-server/server.yaml
+    transport: stdio
+    classification: RESTRICTED
+    capabilities: [store_working_memory, read_working_memory, share_context]
+    allowed_agents: [orchestrator-agent, planning-agent, validation-agent, security-agent, execution-agent, debugging-agent]
+
+# ============================================================
+# SKILL DEFINITIONS
+# ============================================================
+skills:
+  validation:
+    module: skills/validation/skill.yaml
+    schema: skills/validation/schema.json
+    allowed_agents: [orchestrator-agent, validation-agent]
+    requires_real_data: true
+    stub_data_forbidden: true
+
+  security-audit:
+    module: skills/security-audit/skill.yaml
+    schema: skills/security-audit/schema.json
+    allowed_agents: [orchestrator-agent, security-agent]
+    block_on_critical: true
+
+  debugging:
+    module: skills/debugging/skill.yaml
+    schema: skills/debugging/schema.json
+    allowed_agents: [debugging-agent]
+    read_only: true
+
+  code-generation:
+    module: skills/code-generation/skill.yaml
+    schema: skills/code-generation/schema.json
+    allowed_agents: [planning-agent, orchestrator-agent]
+    output_paths_restricted: true
+
+  documentation:
+    module: skills/documentation/skill.yaml
+    schema: skills/documentation/schema.json
+    allowed_agents: [orchestrator-agent, planning-agent, documentation-agent]
+
+  testing:
+    module: skills/testing/skill.yaml
+    schema: skills/testing/schema.json
+    allowed_agents: [orchestrator-agent, planning-agent]
+    never_mock_validation_gates: true
+
+# ============================================================
+# AGENT SUBSCRIPTION MATRIX
+# ============================================================
+agents:
+  orchestrator-agent:
+    model: claude-opus-4-6
+    config: agents/orchestrator-agent/config.yaml
+    mcp_subscriptions:
+      - server: project-context-server
+        capabilities: [get_architecture, get_api_spec, get_schemas, get_agent_config]
+        rate_limit: 30/min
+      - server: documentation-server
+        capabilities: [get_runbook, search_docs]
+        rate_limit: 20/min
+      - server: runtime-context-server
+        capabilities: [get_job_status, get_metrics]
+        rate_limit: 30/min
+      - server: api-server
+        capabilities: [call_migration_api]
+        allowed_methods: [GET, POST]
+        allowed_paths: [/api/v1/migrations/*, /api/v1/health]
+        rate_limit: 30/min
+      - server: memory-server
+        capabilities: [store_working_memory, read_working_memory, share_context]
+        rate_limit: 60/min
+    skill_subscriptions:
+      - skill: validation
+        invoke_as: delegate  # orchestrator delegates, doesn't execute directly
+      - skill: security-audit
+        invoke_as: delegate
+      - skill: documentation
+        invoke_as: delegate
+
+  planning-agent:
+    model: claude-sonnet-4-6
+    config: agents/planning-agent/config.yaml
+    mcp_subscriptions:
+      - server: project-context-server
+        capabilities: [get_architecture, get_schemas, get_agent_config]
+        rate_limit: 20/min
+      - server: documentation-server
+        capabilities: [get_runbook, get_adr, search_docs]
+        rate_limit: 20/min
+      - server: memory-server
+        capabilities: [store_working_memory, read_working_memory]
+        rate_limit: 20/min
+    skill_subscriptions:
+      - skill: code-generation
+        invoke_as: direct
+      - skill: documentation
+        invoke_as: direct
+
+  validation-agent:
+    model: claude-sonnet-4-6
+    config: agents/validation-agent/config.yaml
+    mcp_subscriptions:
+      - server: runtime-context-server
+        capabilities: [get_job_status, get_metrics, get_error_report]
+        rate_limit: 20/min
+      - server: api-server
+        capabilities: [call_salesforce_api, call_migration_api]
+        allowed_methods: [GET]
+        rate_limit: 20/min
+      - server: memory-server
+        capabilities: [store_working_memory]
+        rate_limit: 30/min
+    skill_subscriptions:
+      - skill: validation
+        invoke_as: direct
+        stub_data_forbidden: true
+
+  security-agent:
+    model: claude-sonnet-4-6
+    config: agents/security-agent/config.yaml
+    mcp_subscriptions:
+      - server: project-context-server
+        capabilities: [get_schemas, get_agent_config]
+        rate_limit: 10/min
+      - server: security-context-server
+        capabilities: [get_policies, validate_path]
+        rate_limit: 10/min
+      - server: filesystem-server
+        capabilities: [read_file, list_directory, search_files]
+        path_whitelist_enforced: true
+        rate_limit: 30/min
+      - server: memory-server
+        capabilities: [store_working_memory]
+        rate_limit: 10/min
+    skill_subscriptions:
+      - skill: security-audit
+        invoke_as: direct
+        deterministic_checks_only: true
+
+  execution-agent:
+    model: claude-sonnet-4-6
+    config: agents/execution-agent/config.yaml
+    mcp_subscriptions:
+      - server: runtime-context-server
+        capabilities: [get_job_status]
+        rate_limit: 60/min
+      - server: api-server
+        capabilities: [call_migration_api]
+        allowed_methods: [GET, POST]
+        allowed_paths: [/api/v1/migrations/*/batch, /api/v1/migrations/*/status, /api/v1/migrations/*/checkpoint]
+        requires_validation_gate: ALLOW
+        rate_limit: 60/min
+      - server: memory-server
+        capabilities: [store_working_memory, read_working_memory]
+        rate_limit: 60/min
+    skill_subscriptions: []  # execution agent has no skills — only API calls
+
+  debugging-agent:
+    model: claude-sonnet-4-6
+    config: agents/debugging-agent/config.yaml
+    mcp_subscriptions:
+      - server: runtime-context-server
+        capabilities: [get_job_status, get_metrics, get_error_report, get_kafka_lag]
+        rate_limit: 20/min
+      - server: documentation-server
+        capabilities: [get_runbook, search_docs]
+        rate_limit: 20/min
+      - server: api-server
+        capabilities: [call_migration_api, call_prometheus]
+        allowed_methods: [GET]  # READ ONLY — no POST
+        rate_limit: 20/min
+      - server: memory-server
+        capabilities: [read_working_memory]  # read only, no write
+        rate_limit: 20/min
+    skill_subscriptions:
+      - skill: debugging
+        invoke_as: direct
+        read_only: true

@@ -1,0 +1,124 @@
+skill:
+  name: testing
+  version: "2.0.0"
+  description: >
+    Generates pytest test suites for agent tools, migration pipeline components,
+    and validation logic. All fixtures must use synthetic data only — real PII and
+    production credentials are forbidden in test files. Validation gates and SOQL
+    checks must never be mocked; their behaviour must be exercised through real
+    (or clearly-labelled stub) implementations.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - source_code
+    - test_fixtures_synthetic_only
+    - schema_metadata
+  forbidden_patterns:
+    - "real_pii_in_fixtures"
+    - "production_credentials"
+    - "(?i)(password|token|api_key|secret)\\s*=\\s*['\"][^'\"]{8,}['\"]"
+    - "AKIA[0-9A-Z]{16}"
+    - "sk-ant-[A-Za-z0-9]+"
+    - "(?i)mock.*validation_gate"
+    - "(?i)patch.*validation_gate"
+    - "(?i)mock.*soql_check"
+    - "(?i)patch.*run_custom_soql_check"
+    - "exec\\("
+    - "eval\\("
+    - "__import__"
+    - "subprocess\\.call"
+    - "os\\.system"
+  redaction_rules:
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "AKIA[0-9A-Z]{16}"
+      replacement: "[REDACTED_AWS_KEY]"
+    - pattern: "(?i)(password|secret|token)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+      replacement: "[REDACTED_CREDENTIAL]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+
+testing_enforcement:
+  never_mock_validation_gates: true
+  never_mock_soql_checks: true
+  synthetic_fixtures_only: true
+  approved_fixture_patterns:
+    - "test_*"
+    - "*_fixture*"
+    - "conftest*"
+  approved_output_paths:
+    - tests/
+
+input_schema:
+  type: object
+  required:
+    - component_under_test
+    - test_type
+  properties:
+    component_under_test:
+      type: string
+      maxLength: 200
+    test_type:
+      type: string
+      enum: [unit, integration, contract, failure_scenario, skill_test]
+    source_file:
+      type: string
+      pattern: "^(agents|migration|integrations|tools|skills|security|monitoring)/"
+      maxLength: 200
+    coverage_targets:
+      type: array
+      items:
+        type: string
+      maxItems: 20
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 500
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*[:=]\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET)"
+    action: BLOCK
+  - name: no_mock_validation_gate
+    pattern: "(?i)(mock|patch|stub).*validation.gate"
+    action: BLOCK
+  - name: no_mock_soql
+    pattern: "(?i)(mock|patch|stub).*soql"
+    action: BLOCK
+
+rate_limits:
+  calls_per_minute: 10
+  max_input_size_kb: 50
+  max_output_size_kb: 500
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

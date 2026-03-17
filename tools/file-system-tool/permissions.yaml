@@ -1,0 +1,108 @@
+tool:
+  name: file-system-tool
+  version: "1.0.0"
+  classification: INTERNAL
+  description: >
+    Read-only file system access for the security-audit-agent. Permits reading
+    source files under a whitelisted set of project paths. Write operations are
+    unconditionally forbidden. All resolved paths are validated against the
+    canonical PROJECT_ROOT to prevent path traversal attacks.
+
+access_control:
+  default_policy: DENY
+  allowed_agents:
+    - security-agent   # ONLY the security-audit-agent may use this tool
+  require_authentication: true
+  require_audit_log: true
+
+sandboxing:
+  enabled: true
+  network_access: false
+  filesystem_access: whitelisted_read_only
+  max_memory_mb: 128
+  max_execution_time_seconds: 30
+  allowed_system_calls:
+    - read
+    - open
+    - stat
+    - lstat
+    - getdents
+    - close
+    - fstat
+
+path_enforcement:
+  write_operations: FORBIDDEN
+  path_traversal_check: strict
+  canonical_path_validation: true
+  # Resolved canonical path must begin with PROJECT_ROOT
+  allowed_paths:
+    - /var/data/migration/
+    - /tmp/migration-work/
+    - ./docs/
+    - ./monitoring/
+    - ./architecture/
+    - ./agents/
+    - ./integrations/
+    - ./security/
+    - ./migration/
+    - ./tools/
+    - ./skills/
+    - ./config/
+  forbidden_paths:
+    - /etc/
+    - /var/secrets/
+    - ~/.aws
+    - ~/.ssh
+    - /run/secrets/
+    - "*.pem"
+    - "*.key"
+    - "*.env"
+    - ".git/config"
+  max_file_size_mb: 10
+  follow_symlinks: false   # Never follow symlinks — could escape the allowed path set
+
+input_validation:
+  schema_validation: strict
+  max_payload_size_kb: 4    # Only file paths, no large payloads
+  forbidden_patterns:
+    - "DROP\\s+TABLE"
+    - "DELETE\\s+FROM"
+    - "INSERT\\s+INTO"
+    - "UPDATE\\s+\\w+\\s+SET"
+    - "EXEC\\s*\\("
+    - "eval\\("
+    - "__import__"
+    - "\\.\\."            # Block path traversal sequences in input
+    - "^/"               # Block absolute paths — must be relative to PROJECT_ROOT
+  sanitize_before_execution: true
+
+output_sanitization:
+  strip_credentials: true
+  strip_pii: true
+  max_output_size_kb: 200
+  redact_patterns:
+    - pattern: "[A-Za-z0-9+/]{40,}"
+      replacement: "[REDACTED_SECRET]"
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+
+rate_limiting:
+  calls_per_minute: 30
+  calls_per_agent_per_minute: 30   # Only one agent can call it, so these are equivalent
+  burst_limit: 10
+
+audit:
+  log_all_calls: true
+  log_caller_agent: true
+  log_input_hash: true
+  log_output_summary: true
+  log_execution_time: true
+  alert_on_anomaly: true
+  log_file_paths_accessed: true   # Maintain an audit trail of every file read
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 3
+  reset_timeout_seconds: 60

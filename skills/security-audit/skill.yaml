@@ -1,0 +1,138 @@
+skill:
+  name: security-audit
+  version: "2.0.0"
+  description: >
+    Performs OWASP-aligned security scanning across source code, configuration files,
+    and API payloads. Detects exposed credentials, CVEs in dependencies, SQL/SOQL
+    injection vectors, insecure PII handling, weak TLS configurations, and path
+    traversal vulnerabilities. Blocks the pipeline when risk_score >= 0.7 or any
+    CRITICAL/HIGH finding is present.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - source_code
+    - config_files
+    - api_payloads
+    - dependency_manifests
+    - tls_configs
+  forbidden_patterns:
+    - "credential leak"
+    - "private key exposure"
+    - "(?i)password\\s*=\\s*['\"][^'\"]{4,}['\"]"
+    - "sk-ant-[A-Za-z0-9]+"
+    - "AKIA[0-9A-Z]{16}"
+  redaction_rules:
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "AKIA[0-9A-Z]{16}"
+      replacement: "[REDACTED_AWS_KEY]"
+    - pattern: "(?i)(password|secret|token)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+      replacement: "[REDACTED_CREDENTIAL]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+
+gate_policy:
+  block_on_critical: true
+  block_on_high: true
+  risk_score_block_threshold: 0.7
+  pass_gate_requires: critical_count == 0 AND high_count == 0
+  risk_score_formula: "(critical * 1.0 + high * 0.7 + medium * 0.3 + low * 0.1) / max_possible"
+
+secrets_detection:
+  entropy_threshold: 4.5
+  scan_patterns:
+    - name: anthropic_api_key
+      pattern: "sk-ant-[A-Za-z0-9]+"
+      severity: CRITICAL
+    - name: aws_access_key
+      pattern: "AKIA[0-9A-Z]{16}"
+      severity: CRITICAL
+    - name: private_key_header
+      pattern: "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----"
+      severity: CRITICAL
+    - name: high_entropy_string
+      pattern: "[A-Za-z0-9+/]{40,}={0,2}"
+      severity: HIGH
+      requires_entropy_check: true
+
+path_restriction:
+  scan_only_under_project_root: true
+  forbidden_scan_targets:
+    - /etc/
+    - /var/secrets/
+    - ~/.aws
+    - ~/.ssh
+    - /run/secrets/
+
+input_schema:
+  type: object
+  required:
+    - scan_targets
+    - scan_type
+  properties:
+    scan_targets:
+      type: array
+      items:
+        type: string
+        pattern: "^(?!/)(?!\\.\\.)[a-zA-Z0-9_.\\-/]+"
+      minItems: 1
+      maxItems: 50
+    scan_type:
+      type: string
+      enum: [secrets, dependencies, soql_injection, pii_handling, tls, full]
+    severity_threshold:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+      default: HIGH
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 300
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*[:=]\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET)"
+    action: BLOCK
+  - name: no_absolute_scan_paths
+    pattern: "^/"
+    action: BLOCK
+  - name: no_path_traversal
+    pattern: "\\.\\."
+    action: BLOCK
+
+rate_limits:
+  calls_per_minute: 10
+  max_input_size_kb: 50
+  max_output_size_kb: 300
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

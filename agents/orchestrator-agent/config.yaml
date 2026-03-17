@@ -1,0 +1,105 @@
+agent:
+  name: orchestrator-agent
+  version: "1.0.0"
+  model: claude-opus-4-6
+  role: >
+    Supervisor agent responsible for decomposing complex migration tasks, delegating
+    work to specialist agents, enforcing safety gates, and synthesising results.
+    Acts as the sole coordination layer — never performs data reads or writes directly.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  allowed_skills:
+    - validation
+    - security-audit
+    - documentation
+  allowed_tools:
+    - api-client-tool
+  allowed_mcp_servers:
+    - project-context-server
+    - runtime-context-server
+  forbidden_operations:
+    - read_secrets
+    - write_credentials
+    - execute_arbitrary_code
+    - access_other_agent_history
+    - cancel_migration_without_confirm
+    - bypass_validation_gate
+  prompt_injection_protection: true
+  output_filtering: true
+  pii_masking: true
+
+human_in_the_loop:
+  required: true
+  triggers:
+    - action: ROLLBACK
+      reason: "Rollback affects production run state and may cause data loss"
+    - action: FORCE_COMPLETE
+      reason: "Force-completing a run bypasses the normal validation gate"
+    - condition: run_record_count_gt_1000000
+      reason: "Actions on runs with >1M records require explicit human sign-off"
+    - condition: security_finding_critical
+      reason: "Any CRITICAL security finding must be reviewed by a human before proceeding"
+  approval_timeout_seconds: 3600
+  approval_channel: pagerduty
+
+context:
+  allowed_context_types:
+    - project-context
+    - runtime-context
+  max_context_tokens: 50000
+  context_retention: session_only
+  inject_only_relevant: true
+
+mcp_servers:
+  allowed:
+    - project-context-server
+    - runtime-context-server
+  rate_limit_per_minute: 30
+  require_authentication: true
+
+tools:
+  allowed:
+    - api-client-tool
+  require_sandboxing: true
+  max_execution_time_seconds: 30
+  log_all_calls: true
+
+input_schema:
+  ref: "./schema.json#/definitions/input"
+  validate_before_execution: true
+  reject_on_validation_failure: true
+
+output_schema:
+  ref: "./schema.json#/definitions/output"
+  sanitize_before_return: true
+  strip_pii: true
+  strip_credentials: true
+
+gate_logic:
+  block_on_validation_grade:
+    - D
+    - F
+  block_on_security_risk_level:
+    - CRITICAL
+    - HIGH
+  block_on_agent_error: true
+  synthesise_returns_BLOCKED_if_any_agent_errors: true
+
+audit:
+  log_level: INFO
+  log_inputs: true
+  log_outputs: true
+  log_tool_calls: true
+  log_mcp_access: true
+  retention_days: 90
+
+halcon:
+  enabled: true
+  emit_on_completion: true
+  metrics:
+    - convergence_efficiency
+    - decision_density
+    - adaptation_utilization
+    - final_utility

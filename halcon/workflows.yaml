@@ -1,0 +1,610 @@
+version: "1.0.0"
+description: >
+  Halcon high-level workflow registry. Each entry defines a complete orchestration
+  workflow with agent sequence, gate requirements, failure actions, escalation paths,
+  estimated duration, and human approval requirements.
+  Detailed per-phase definitions live in halcon/workflows/*.yaml.
+  This file is the single routing manifest read by the Halcon dispatcher.
+schema_version: "halcon/v2"
+last_updated: "2026-03-17"
+
+# ---------------------------------------------------------------------------
+# Workflow: secure_migration_workflow
+# Full pipeline — source validation → planning → security + validation gates
+# → execution → post-validation → documentation
+# ---------------------------------------------------------------------------
+workflows:
+
+  secure_migration_workflow:
+    id: secure_migration_workflow
+    version: "2.0.0"
+    description: >
+      Full end-to-end migration pipeline with all security and validation gates
+      enforced. Suitable for production migrations of any record volume.
+      Includes parallel validation and security gate phases, human-in-the-loop
+      checkpoints for HIGH_RISK plans and >1M record runs, and automatic rollback
+      on execution failure.
+    estimated_duration_minutes: 480
+    max_timeout_minutes: 720
+
+    triggers:
+      - type: api
+        endpoint: "POST /api/v1/workflows/secure_migration_workflow/trigger"
+        required_fields: [migration_id, tenant_id, source_connection_ref, object_types]
+      - type: scheduled
+        cron: null  # on-demand only for migration — no automatic schedule
+      - type: event
+        event_type: MIGRATION_REQUESTED
+        source: migration-control-plane
+
+    agent_sequence:
+      - step: 1
+        agent: validation-agent
+        phase: PRE_VALIDATION
+        description: "Gate1 — validate source completeness and schema conformance"
+        inputs: [migration_id, tenant_id, source_connection_ref, source_schema_manifest]
+        outputs: [validation_report, source_record_count, schema_diff_report]
+        timeout_seconds: 3600
+        failure_action: BLOCK
+
+      - step: 2
+        agent: planning-agent
+        phase: PLANNING
+        description: "Build chunked execution plan, estimate duration, classify risk"
+        inputs: [validation_report, source_record_count, migration_config, tenant_id]
+        outputs: [execution_plan, chunk_manifest, estimated_duration_minutes]
+        timeout_seconds: 1800
+        failure_action: ESCALATE_TO_HUMAN
+        depends_on: [step_1_gate1_source_completeness]
+
+      - step: 3
+        parallel_group: gates
+        description: "Security audit and target validation run concurrently"
+        agents:
+          - agent: security-agent
+            phase: SECURITY_GATE
+            inputs: [execution_plan, migration_config, source_connection_ref]
+            outputs: [security_audit_report, approved_for_execution]
+            timeout_seconds: 2700
+            failure_action: BLOCK
+
+          - agent: validation-agent
+            phase: VALIDATION_GATE
+            inputs: [execution_plan, security_audit_report, salesforce_credentials_ref, tenant_id]
+            outputs: [gate2_result, target_capacity_report, api_calls_available]
+            timeout_seconds: 2700
+            failure_action: BLOCK
+        depends_on: [step_2_plan_approval_gate]
+
+      - step: 4
+        agent: execution-agent
+        phase: EXECUTION
+        description: "Execute migration in chunks via Kafka pipeline"
+        inputs: [execution_plan, chunk_manifest, security_audit_report, gate2_result, tenant_id, migration_id]
+        outputs: [migration_result, records_migrated, records_failed, dlq_count, error_manifest]
+        timeout_seconds: 21600
+        failure_action: ROLLBACK_AND_ESCALATE
+        depends_on: [step_3_security_clearance_gate, step_3_gate2_target_validity]
+
+      - step: 5
+        agent: validation-agent
+        phase: POST_VALIDATION
+        description: "Gate3 — stratified sample validation against Salesforce target org"
+        inputs: [migration_result, source_record_count, records_migrated, execution_plan, salesforce_credentials_ref, tenant_id]
+        outputs: [post_migration_report, reconciliation_report, final_record_count]
+        timeout_seconds: 5400
+        failure_action: ESCALATE_TO_HUMAN
+        depends_on: [step_4_execution_threshold_gate]
+
+    gate_requirements:
+      - gate: gate1_source_completeness
+        after_step: 1
+        evaluated_by: validation-agent
+        pass_condition: "validation_report.gate1_passed == true AND source_record_count > 0"
+        on_pass: advance_to_step_2
+        on_fail: BLOCK
+        log_decision: true
+
+      - gate: plan_approval_gate
+        after_step: 2
+        evaluated_by: orchestrator-agent
+        pass_condition: >
+          execution_plan.risk_level IN ['LOW', 'MEDIUM']
+          OR (execution_plan.risk_level == 'HIGH' AND human_approval == true)
+        on_pass: advance_to_step_3
+        on_fail: ESCALATE_TO_HUMAN
+        human_approval_timeout_minutes: 60
+
+      - gate: security_clearance_gate
+        after_step: 3
+        evaluated_by: security-agent
+        pass_condition: "security_audit_report.critical_findings == 0 AND approved_for_execution == true"
+        on_pass: continue  # both gates in step 3 must pass before step 4
+        on_fail: BLOCK
+
+      - gate: gate2_target_validity
+        after_step: 3
+        evaluated_by: validation-agent
+        pass_condition: "gate2_result.passed == true AND api_calls_available >= execution_plan.estimated_api_calls"
+        on_pass: continue
+        on_fail: BLOCK
+
+      - gate: execution_threshold_gate
+        after_step: 4
+        evaluated_by: execution-agent
+        pass_condition: "migration_result.success_rate >= 0.99 AND dlq_count <= execution_plan.dlq_threshold"
+        on_pass: advance_to_step_5
+        on_fail: ROLLBACK_AND_ESCALATE
+
+      - gate: gate3_post_load_sample
+        after_step: 5
+        evaluated_by: validation-agent
+        pass_condition: >
+          post_migration_report.gate3_passed == true
+          AND reconciliation_report.discrepancy_rate <= 0.001
+        on_pass: COMPLETE_WORKFLOW
+        on_fail: ESCALATE_TO_HUMAN
+
+    human_approval_required:
+      - condition: "execution_plan.risk_level == 'HIGH'"
+        checkpoint: plan_approval_gate
+        timeout_minutes: 60
+        on_timeout: CANCEL
+        notify: [pagerduty, slack-migration-oncall, email-migration-lead]
+
+      - condition: "source_record_count > 1000000"
+        checkpoint: pre_execution_human_gate
+        timeout_minutes: 60
+        on_timeout: CANCEL
+        notify: [pagerduty, slack-migration-oncall]
+        note: "CLAUDE.md rule #10: >1M record runs require explicit human approval"
+
+      - condition: "rollback triggered"
+        checkpoint: rollback_confirmation_gate
+        timeout_minutes: 30
+        on_timeout: BLOCK
+        notify: [pagerduty, slack-migration-oncall]
+
+    failure_actions:
+      BLOCK:
+        steps:
+          - "Write BLOCKED state to migration state store"
+          - "Emit failure metrics to Halcon retrospective (do NOT fabricate values)"
+          - "Send P2 PagerDuty alert with gate decision context"
+          - "Preserve all artifacts for post-mortem"
+          - "Notify ops-team and migration-lead via Slack"
+
+      ROLLBACK_AND_ESCALATE:
+        steps:
+          - "Halt Kafka producer immediately"
+          - "Record final DLQ depth and consumer lag"
+          - "Await human approval before issuing Salesforce bulk delete"
+          - "Mark migration_id as ROLLED_BACK in state store"
+          - "Emit rollback_complete to Halcon retrospective"
+          - "Send P1 PagerDuty alert"
+
+      ESCALATE_TO_HUMAN:
+        steps:
+          - "Write AWAITING_HUMAN state to migration state store"
+          - "Send P2 PagerDuty alert with full context payload"
+          - "Post detailed summary to #migration-oncall Slack"
+          - "Preserve all current outputs for human review"
+          - "Pause workflow — do not advance until human confirmation received"
+
+    escalation_paths:
+      primary: pagerduty
+      secondary: slack-migration-oncall
+      tertiary: email-migration-lead
+      p1_override: [pagerduty, slack-security-channel, email-ciso]
+
+    halcon_retrospective:
+      emit_on: [COMPLETE_WORKFLOW, BLOCK, ROLLBACK_AND_ESCALATE]
+      metrics_required: [convergence_efficiency, final_utility, peak_utility, decision_density, wasted_rounds]
+      fabrication_forbidden: true
+
+  # ---------------------------------------------------------------------------
+  # Workflow: validation_only_workflow
+  # Re-validation without execution — for drift detection and pre-migration checks
+  # ---------------------------------------------------------------------------
+  validation_only_workflow:
+    id: validation_only_workflow
+    version: "2.0.0"
+    description: >
+      Standalone validation workflow. Runs all three validation gates (source
+      completeness, target readiness, and post-load sample check on a prior
+      migration run) without performing any data movement. Used for scheduled
+      drift detection, re-validation after configuration changes, and pre-migration
+      readiness checks before scheduling a full migration window.
+    estimated_duration_minutes: 90
+    max_timeout_minutes: 180
+
+    triggers:
+      - type: api
+        endpoint: "POST /api/v1/workflows/validation_only_workflow/trigger"
+        required_fields: [migration_id, tenant_id, validation_scope]
+      - type: scheduled
+        cron: "0 6 * * *"  # daily at 06:00 UTC for drift detection
+        schedule_note: "Scheduled validation runs against existing Salesforce data only — no source connection required for gate2/gate3"
+      - type: event
+        event_type: VALIDATION_REQUESTED
+        source: migration-control-plane
+
+    agent_sequence:
+      - step: 1
+        agent: validation-agent
+        phase: GATE1_SOURCE_COMPLETENESS
+        description: "Validate source data completeness and field null rates"
+        inputs: [migration_id, tenant_id, source_connection_ref]
+        outputs: [gate1_result, source_record_count, schema_diff]
+        timeout_seconds: 2700
+        failure_action: REPORT_AND_STOP
+        conditional: "validation_scope includes 'source' OR validation_scope == 'full'"
+
+      - step: 2
+        agent: validation-agent
+        phase: GATE2_TARGET_VALIDITY
+        description: "Validate Salesforce org readiness: capacity, permissions, duplicate risk"
+        inputs: [migration_config, salesforce_credentials_ref, tenant_id]
+        outputs: [gate2_result, target_capacity_report]
+        timeout_seconds: 1800
+        failure_action: REPORT_AND_STOP
+        conditional: "validation_scope includes 'target' OR validation_scope == 'full'"
+
+      - step: 3
+        agent: validation-agent
+        phase: GATE3_POST_LOAD_SAMPLE
+        description: "Sample-based reconciliation against a prior completed migration run"
+        inputs: [sample_migration_id, source_sample_ref, target_org_credentials_ref]
+        outputs: [gate3_result, sample_reconciliation]
+        timeout_seconds: 2700
+        failure_action: REPORT_AND_STOP
+        conditional: "validation_scope includes 'post_load' OR validation_scope == 'full'"
+
+    gate_requirements:
+      - gate: gate1_source_completeness
+        after_step: 1
+        evaluated_by: validation-agent
+        pass_condition: "gate1_result.passed == true AND source_record_count > 0"
+        on_pass: advance_to_step_2
+        on_fail: REPORT_AND_STOP
+
+      - gate: gate2_target_validity
+        after_step: 2
+        evaluated_by: validation-agent
+        pass_condition: "gate2_result.passed == true"
+        on_pass: advance_to_step_3
+        on_fail: REPORT_AND_STOP
+
+      - gate: gate3_post_load_sample
+        after_step: 3
+        evaluated_by: validation-agent
+        pass_condition: "gate3_result.passed == true"
+        on_pass: COMPLETE_WORKFLOW
+        on_fail: REPORT_AND_STOP
+
+    human_approval_required: []  # validation is read-only; no human gate needed
+
+    failure_actions:
+      REPORT_AND_STOP:
+        steps:
+          - "Write VALIDATION_FAILED state to run record"
+          - "Generate full ValidationReport with per-gate breakdown"
+          - "Emit Halcon retrospective metrics"
+          - "Notify ops-team via Slack (no PagerDuty for read-only failure)"
+          - "Preserve gate outputs for review"
+
+    escalation_paths:
+      primary: slack-migration-oncall
+      secondary: email-migration-lead
+
+    halcon_retrospective:
+      emit_on: [COMPLETE_WORKFLOW, REPORT_AND_STOP]
+      metrics_required: [convergence_efficiency, final_utility, decision_density]
+      fabrication_forbidden: true
+
+  # ---------------------------------------------------------------------------
+  # Workflow: security_audit_workflow
+  # Pre-deployment and on-demand security scan — no data movement
+  # ---------------------------------------------------------------------------
+  security_audit_workflow:
+    id: security_audit_workflow
+    version: "2.0.0"
+    description: >
+      Standalone security audit workflow. Runs secrets scanning, dependency CVE
+      checks, API authentication audit, SOQL injection analysis, PII handling
+      review, and TLS configuration validation. Designed for pre-deployment
+      security gates in CI/CD and on-demand audits triggered by security events.
+      No data movement occurs. Any CRITICAL finding halts the pipeline immediately.
+    estimated_duration_minutes: 45
+    max_timeout_minutes: 120
+
+    triggers:
+      - type: api
+        endpoint: "POST /api/v1/workflows/security_audit_workflow/trigger"
+        required_fields: [scan_scope, trigger_reason]
+      - type: ci_cd
+        event: pre_deployment
+        branch_patterns: [main, release/*, hotfix/*]
+      - type: event
+        event_type: SECURITY_SCAN_REQUESTED
+        source: security-control-plane
+      - type: scheduled
+        cron: "0 2 * * 1"  # weekly Monday at 02:00 UTC
+        schedule_note: "Full dependency and secrets scan on all agent code"
+
+    agent_sequence:
+      - step: 1
+        agent: security-agent
+        phase: SECRETS_SCAN
+        description: "Scan all agent code, config, and environment for leaked secrets"
+        inputs: [repository_path, config_paths, environment_refs]
+        outputs: [secrets_scan_report]
+        timeout_seconds: 900
+        failure_action: BLOCK
+        note: "scan_file_for_secrets tool restricted to PROJECT_ROOT — no traversal"
+
+      - step: 2
+        agent: security-agent
+        phase: DEPENDENCY_AUDIT
+        description: "Check all Python dependencies for known CVEs via Trivy/Safety"
+        inputs: [requirements_files, lock_files]
+        outputs: [dependency_audit_report]
+        timeout_seconds: 900
+        failure_action: BLOCK
+
+      - step: 3
+        agent: security-agent
+        phase: API_SECURITY_CHECK
+        description: "Audit API authentication, authorization, and endpoint exposure"
+        inputs: [api_endpoints, auth_config, rbac_config]
+        outputs: [api_security_report]
+        timeout_seconds: 900
+        failure_action: BLOCK
+
+      - step: 4
+        agent: security-agent
+        phase: SOQL_INJECTION_AUDIT
+        description: "Audit all SOQL query construction paths for injection vectors"
+        inputs: [soql_query_files, agent_code_paths]
+        outputs: [injection_audit_report]
+        timeout_seconds: 900
+        failure_action: BLOCK
+
+      - step: 5
+        agent: security-agent
+        phase: PII_HANDLING_REVIEW
+        description: "Verify PII is never logged, printed, or passed to prompts"
+        inputs: [agent_code_paths, log_config_paths]
+        outputs: [pii_handling_report]
+        timeout_seconds: 600
+        failure_action: BLOCK
+
+      - step: 6
+        agent: security-agent
+        phase: TLS_CONFIGURATION_CHECK
+        description: "Verify all outbound connections use TLS 1.2+ with valid certificates"
+        inputs: [api_endpoint_configs, tls_policy]
+        outputs: [tls_report]
+        timeout_seconds: 300
+        failure_action: BLOCK
+
+    gate_requirements:
+      - gate: no_leaked_secrets
+        after_step: 1
+        pass_condition: "secrets_scan_report.leaked_secrets == 0"
+        on_pass: advance_to_step_2
+        on_fail: BLOCK
+        alert_on_fail: true
+        alert_severity: P1
+
+      - gate: no_critical_cves
+        after_step: 2
+        pass_condition: "dependency_audit_report.critical_cves == 0"
+        on_pass: advance_to_step_3
+        on_fail: BLOCK
+        note: "HIGH CVEs produce warning but do not block unless critical_count > 0"
+
+      - gate: api_auth_enforced
+        after_step: 3
+        pass_condition: "api_security_report.unauthenticated_endpoints == 0"
+        on_pass: advance_to_step_4
+        on_fail: BLOCK
+
+      - gate: no_injection_vectors
+        after_step: 4
+        pass_condition: "injection_audit_report.injection_risks == 0"
+        on_pass: advance_to_step_5
+        on_fail: BLOCK
+
+      - gate: pii_not_in_logs
+        after_step: 5
+        pass_condition: "pii_handling_report.pii_in_logs == 0 AND pii_handling_report.pii_in_prompts == 0"
+        on_pass: advance_to_step_6
+        on_fail: BLOCK
+
+      - gate: tls_policy_enforced
+        after_step: 6
+        pass_condition: "tls_report.insecure_connections == 0"
+        on_pass: COMPLETE_WORKFLOW
+        on_fail: BLOCK
+
+    human_approval_required:
+      - condition: "ANY critical finding (any gate fails)"
+        checkpoint: critical_finding_human_review
+        timeout_minutes: 30
+        on_timeout: BLOCK
+        notify: [pagerduty, slack-security-channel, email-ciso]
+        note: "CLAUDE.md rule #10: CRITICAL security findings require human approval before any action"
+
+    failure_actions:
+      BLOCK:
+        steps:
+          - "Write SECURITY_BLOCKED state to audit record"
+          - "Generate consolidated security report with all findings"
+          - "Send P1 PagerDuty alert with finding summary"
+          - "Post to #slack-security-channel with full report"
+          - "Emit to Splunk for SIEM correlation"
+          - "Prevent deployment pipeline from advancing (CI/CD context)"
+          - "Emit Halcon retrospective metrics"
+
+    escalation_paths:
+      primary: pagerduty
+      secondary: slack-security-channel
+      tertiary: email-ciso
+
+    halcon_retrospective:
+      emit_on: [COMPLETE_WORKFLOW, BLOCK]
+      metrics_required: [convergence_efficiency, final_utility, decision_density]
+      fabrication_forbidden: true
+
+  # ---------------------------------------------------------------------------
+  # Workflow: incident_debug_workflow
+  # Read-only diagnostic workflow for failed or stalled migrations
+  # ---------------------------------------------------------------------------
+  incident_debug_workflow:
+    id: incident_debug_workflow
+    version: "2.0.0"
+    description: >
+      Diagnostic workflow for investigating failed, stalled, or anomalous migration
+      runs. Strictly read-only — no state changes, no rollbacks, no retries are
+      triggered by this workflow. The output is a triage report, root cause analysis,
+      and remediation recommendations for human review. Any corrective action must
+      be taken through the secure_migration_workflow or a human operator.
+    estimated_duration_minutes: 30
+    max_timeout_minutes: 90
+    read_only: true
+
+    triggers:
+      - type: api
+        endpoint: "POST /api/v1/workflows/incident_debug_workflow/trigger"
+        required_fields: [migration_id, incident_type]
+      - type: event
+        event_type: MIGRATION_FAILED
+        source: migration-control-plane
+      - type: event
+        event_type: STALL_DETECTED
+        source: monitoring
+      - type: event
+        event_type: ERROR_RATE_EXCEEDED
+        source: migration-control-plane
+        threshold: 0.05  # trigger debug workflow if error rate > 5%
+      - type: manual
+        initiator: human_operator
+        note: "On-call engineer can trigger debug workflow for any run in non-IDLE state"
+
+    agent_sequence:
+      - step: 1
+        agent: debugging-agent
+        phase: TRIAGE
+        description: >
+          Classify the failure type, identify the first-failing component,
+          and determine if the issue is transient or structural.
+        inputs: [migration_id, error_manifest, logs_path, current_state]
+        outputs: [triage_report, failure_classification]
+        timeout_seconds: 1200
+        failure_action: REPORT_AND_CONTINUE
+        read_only: true
+
+      - step: 2
+        agent: debugging-agent
+        phase: ROOT_CAUSE_ANALYSIS
+        description: >
+          Deep analysis of the failure: inspect error patterns, check API limits,
+          review batch size vs. available Salesforce capacity, correlate DLQ depth
+          with error timestamps.
+        inputs: [triage_report, failure_classification, error_manifest, migration_id]
+        outputs: [rca_report, recommended_remediation]
+        timeout_seconds: 1800
+        failure_action: REPORT_AND_CONTINUE
+        read_only: true
+        depends_on: [step_1_triage_complete]
+
+      - step: 3
+        agent: orchestrator-agent
+        phase: REMEDIATION_PLAN
+        description: >
+          Synthesize triage and RCA into a structured remediation plan.
+          Classify whether the remediation requires human approval.
+          Never execute the remediation — output the plan only.
+        inputs: [rca_report, recommended_remediation, migration_config]
+        outputs: [remediation_plan, requires_human_approval]
+        timeout_seconds: 600
+        failure_action: REPORT_AND_CONTINUE
+        read_only: true
+        depends_on: [step_2_rca_complete]
+
+    gate_requirements:
+      - gate: triage_complete
+        after_step: 1
+        pass_condition: "triage_report is not null AND failure_classification is not null"
+        on_pass: advance_to_step_2
+        on_fail: REPORT_AND_CONTINUE
+        note: "Debug workflow never hard-blocks — always produces a report"
+
+      - gate: rca_complete
+        after_step: 2
+        pass_condition: "rca_report is not null"
+        on_pass: advance_to_step_3
+        on_fail: REPORT_AND_CONTINUE
+
+      - gate: human_approval_for_remediation
+        after_step: 3
+        pass_condition: "requires_human_approval == false OR human_approval == true"
+        on_pass: COMPLETE_WORKFLOW
+        on_fail: ESCALATE_TO_HUMAN
+        note: >
+          The remediation plan itself never executes within this workflow.
+          This gate simply determines whether the plan can be auto-queued
+          (low-risk remediations) or must await human review.
+
+    human_approval_required:
+      - condition: "remediation_plan.risk_level IN ['HIGH', 'CRITICAL']"
+        checkpoint: human_approval_for_remediation
+        timeout_minutes: 60
+        on_timeout: ESCALATE_AND_BLOCK
+        notify: [pagerduty, slack-migration-oncall]
+
+      - condition: "remediation_plan.involves_rollback == true"
+        checkpoint: human_approval_for_remediation
+        timeout_minutes: 30
+        on_timeout: BLOCK
+        notify: [pagerduty, slack-migration-oncall]
+
+    failure_actions:
+      REPORT_AND_CONTINUE:
+        steps:
+          - "Write partial results collected so far to debug_report"
+          - "Emit Halcon retrospective metrics with available data"
+          - "Notify ops-team that debug workflow completed with partial results"
+          - "Preserve all artifacts for manual investigation"
+
+      ESCALATE_TO_HUMAN:
+        steps:
+          - "Write AWAITING_HUMAN_REVIEW state to debug record"
+          - "Send P2 PagerDuty alert with full remediation_plan attached"
+          - "Post to #migration-oncall Slack with plan summary"
+          - "Await human confirmation before any action is taken"
+
+    escalation_paths:
+      primary: slack-migration-oncall
+      secondary: pagerduty
+      tertiary: email-migration-lead
+
+    constraints:
+      never_execute:
+        - pause_migration
+        - resume_migration
+        - cancel_migration
+        - retry_failed_records
+        - scale_batch_size
+        - rollback
+      note: >
+        Incident debug workflow is strictly read-only. The debugging-agent
+        and orchestrator in this workflow context have no access to mutating tools.
+        All corrective actions must be initiated through a separate workflow
+        or by a human operator.
+
+    halcon_retrospective:
+      emit_on: [COMPLETE_WORKFLOW, REPORT_AND_CONTINUE, ESCALATE_TO_HUMAN]
+      metrics_required: [convergence_efficiency, final_utility, decision_density, dominant_failure_mode]
+      fabrication_forbidden: true

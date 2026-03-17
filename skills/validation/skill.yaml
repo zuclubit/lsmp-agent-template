@@ -1,0 +1,138 @@
+skill:
+  name: validation
+  version: "2.0.0"
+  description: >
+    Performs data quality validation on migration records. Checks record counts,
+    field completeness, referential integrity, duplicate rates, data types, and
+    aggregate statistics against source and target systems. All queries are
+    SELECT-only against real databases — stub data is strictly forbidden.
+    Default gate decision is BLOCK; only explicit passing criteria grant ALLOW.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - migration_records_anonymized
+    - schema_metadata
+    - aggregate_statistics
+    - record_counts
+    - field_completeness_rates
+  forbidden_patterns:
+    - "raw_pii_values"
+    - "unmasked_sf_ids_in_prompts"
+    - "(?i)ssn[:=\\s]+\\d{3}-\\d{2}-\\d{4}"
+    - "(?i)credit.?card[:=\\s]+\\d{13,19}"
+    - "DROP\\s+TABLE"
+    - "DELETE\\s+FROM"
+    - "UPDATE\\s+\\w+\\s+SET"
+    - "INSERT\\s+INTO"
+    - "MERGE\\s+INTO"
+    - "TRUNCATE"
+    - "GRANT\\s+"
+    - "(?i)stub_data"
+    - "(?i)fake_validation"
+    - "(?i)mock_result"
+  redaction_rules:
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+    - pattern: "\\b\\d{13,19}\\b"
+      replacement: "[REDACTED_CARD_NUMBER]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+    - pattern: "(?i)(password|secret|token)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+      replacement: "[REDACTED_CREDENTIAL]"
+    - pattern: "\\b[0-9A-Za-z]{15,18}\\b"
+      replacement: "[MASKED_SF_ID]"
+
+validation_enforcement:
+  stub_data_forbidden: true
+  default_result: BLOCK
+  # A None/missing quality_report always resolves to grade=F, overall_score=0.0
+  null_report_defaults:
+    overall_score: 0.0
+    grade: F
+    gate_decision: BLOCK
+  real_db_queries: true
+  db_operations: SELECT_ONLY
+  soql_operations: SELECT_ONLY
+  passing_grades:
+    - A
+    - B
+    - C
+  blocking_grades:
+    - D
+    - F
+
+input_schema:
+  type: object
+  required:
+    - run_id
+    - object_types
+  properties:
+    run_id:
+      type: string
+      pattern: "^run-[a-z0-9\\-]+$"
+      maxLength: 64
+    object_types:
+      type: array
+      items:
+        type: string
+        enum: [Account, Contact, Opportunity, Case, Lead, Custom]
+      minItems: 1
+      maxItems: 10
+    sample_size:
+      type: integer
+      minimum: 1
+      maximum: 50
+      default: 50
+      description: "Capped at 50 records per compare_sample_records call to prevent token exhaustion"
+    checks_to_run:
+      type: array
+      items:
+        type: string
+        enum: [record_counts, field_completeness, referential_integrity, duplicates, data_types, anomalies]
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 100
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*[:=]\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET|MERGE\\s+INTO)"
+    action: BLOCK
+  - name: no_stub_data
+    pattern: "(?i)(stub_data|fake_validation|mock_result|overall_score.*=.*0\\.95)"
+    action: BLOCK
+
+rate_limits:
+  calls_per_minute: 20
+  max_input_size_kb: 20
+  max_output_size_kb: 100
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

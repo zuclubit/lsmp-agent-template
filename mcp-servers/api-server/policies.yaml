@@ -1,0 +1,216 @@
+access_policies:
+  default: DENY
+
+  # ============================================================
+  # PER-AGENT API ACCESS RULES
+  # ============================================================
+  agent_rules:
+
+    orchestrator-agent:
+      description: "Orchestrator may read migration state and control run lifecycle (pause/resume only)"
+      allowed:
+        - service: migration-api
+          methods: [GET]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}"
+            - "/api/v1/migrations/runs/{run_id}/status"
+            - "/api/v1/migrations/runs/{run_id}/errors"
+            - "/api/v1/integrations/salesforce/limits"
+            - "/api/v1/health"
+        - service: migration-api
+          methods: [POST]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}/pause"
+            - "/api/v1/migrations/runs/{run_id}/resume"
+          condition: "run.total_records <= 1000000 OR request.human_approval_token != null"
+      denied:
+        - service: migration-api
+          methods: [POST]
+          paths: ["/api/v1/migrations/runs/{run_id}/batch", "/api/v1/migrations/retry", "/api/v1/migrations/runs/{run_id}/batch-size"]
+          note: "Batch execution is execution-agent's responsibility only"
+
+    validation-agent:
+      description: "Validation agent reads migration validation state and Salesforce bulk job status"
+      allowed:
+        - service: migration-api
+          methods: [GET]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}/validation"
+            - "/api/v1/migrations/runs/{run_id}/status"
+            - "/api/v1/migrations/runs/{run_id}/errors"
+        - service: salesforce
+          methods: [GET]
+          paths:
+            - "/services/data/v58.0/jobs/ingest/{job_id}"
+            - "/services/data/v58.0/jobs/ingest/{job_id}/successfulResults"
+            - "/services/data/v58.0/jobs/ingest/{job_id}/failedResults"
+            - "/services/data/v58.0/limits"
+        - service: prometheus
+          methods: [GET]
+          paths:
+            - "/api/v1/query"
+            - "/api/v1/query_range"
+      denied:
+        - service: migration-api
+          methods: [POST]
+          paths: ["*"]
+          note: "Validation agent is read-only"
+
+    execution-agent:
+      description: "Execution agent manages batch submission and monitors progress"
+      allowed:
+        - service: migration-api
+          methods: [GET]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}/status"
+            - "/api/v1/migrations/runs/{run_id}/batch"
+            - "/api/v1/integrations/salesforce/limits"
+            - "/api/v1/health"
+        - service: migration-api
+          methods: [POST]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}/batch"
+            - "/api/v1/migrations/runs/{run_id}/batch-size"
+            - "/api/v1/migrations/retry"
+          condition: "run.total_records <= 1000000 OR request.human_approval_token != null"
+        - service: salesforce
+          methods: [POST]
+          paths:
+            - "/services/data/v58.0/jobs/ingest"
+            - "/services/data/v58.0/jobs/ingest/{job_id}/batches"
+      denied:
+        - service: migration-api
+          methods: [POST]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}/pause"
+            - "/api/v1/migrations/runs/{run_id}/resume"
+          note: "Lifecycle control is orchestrator-agent's responsibility"
+
+    debugging-agent:
+      description: "Debugging agent is strictly read-only across all services"
+      allowed:
+        - service: migration-api
+          methods: [GET]
+          paths:
+            - "/api/v1/migrations/runs/{run_id}"
+            - "/api/v1/migrations/runs/{run_id}/status"
+            - "/api/v1/migrations/runs/{run_id}/errors"
+            - "/api/v1/migrations/runs/{run_id}/validation"
+            - "/api/v1/health"
+        - service: kafka-connect
+          methods: [GET]
+          paths:
+            - "/connectors/{connector}/status"
+            - "/connectors/{connector}/offsets"
+            - "/connectors"
+        - service: prometheus
+          methods: [GET]
+          paths:
+            - "/api/v1/query"
+            - "/api/v1/query_range"
+            - "/api/v1/series"
+      denied:
+        - service: "*"
+          methods: [POST, PUT, PATCH, DELETE]
+          paths: ["*"]
+          note: "Debugging agent has zero write access — immutable observer"
+
+    planning-agent:
+      description: "Planning agent has no API access — operates only on project context and documentation"
+      allowed: []
+      denied:
+        - service: "*"
+          methods: ["*"]
+          paths: ["*"]
+          note: "Planning is a context-only agent, no live API calls"
+
+    security-agent:
+      description: "Security agent has no API access — operates via filesystem-server only"
+      allowed: []
+      denied:
+        - service: "*"
+          methods: ["*"]
+          paths: ["*"]
+          note: "Security agent uses filesystem-server to scan source code — no live API calls"
+
+  # ============================================================
+  # GLOBAL DENY RULES — override all agent rules, priority: 1
+  # ============================================================
+  global_deny_rules:
+
+    - id: "API-DENY-001"
+      description: "Block all DELETE on production data endpoints — no exceptions"
+      methods: [DELETE]
+      paths:
+        - "/api/v1/migrations/runs/*"
+        - "/services/data/v58.0/sobjects/*"
+        - "/services/data/v58.0/jobs/*"
+      principal: "*"
+      effect: DENY
+      priority: 1
+
+    - id: "API-DENY-002"
+      description: "Block SOQL DML keywords in any query parameter or request body"
+      soql_keyword_blocklist: [DELETE, UPDATE, INSERT, UPSERT, MERGE, DROP, GRANT, CREATE, TRUNCATE]
+      applies_to: [request_body, query_params]
+      principal: "*"
+      effect: DENY
+      priority: 1
+      severity: CRITICAL
+
+    - id: "API-DENY-003"
+      description: "Block PATCH on all migration data endpoints — use dedicated lifecycle endpoints"
+      methods: [PATCH]
+      paths:
+        - "/api/v1/migrations/*"
+        - "/services/data/v58.0/jobs/*"
+      principal: "*"
+      effect: DENY
+      priority: 1
+
+    - id: "API-DENY-004"
+      description: "Block access to admin, RBAC, and Vault management endpoints"
+      methods: ["*"]
+      paths:
+        - "/api/v1/admin/*"
+        - "/api/v1/rbac/*"
+        - "/api/v1/vault/*"
+        - "/api/v1/secrets/*"
+      principal: "*"
+      effect: DENY
+      priority: 1
+
+  # ============================================================
+  # PRODUCTION SAFETY GATES
+  # ============================================================
+  safety_gates:
+    cancel_migration:
+      description: "cancel_migration may only be called via agent tool with confirm: true — never via raw API proxy"
+      enforcement: agent_tool_layer  # enforced in MigrationAgent.tools — not at this layer
+      note: "If a raw DELETE request reaches this server for a run endpoint, it is blocked by API-DENY-001"
+
+    large_run_operations:
+      threshold_records: 1000000
+      affected_operations:
+        - "POST /api/v1/migrations/runs/{run_id}/pause"
+        - "POST /api/v1/migrations/runs/{run_id}/resume"
+        - "POST /api/v1/migrations/runs/{run_id}/batch"
+      enforcement: require_human_approval_token
+      approval_ttl_seconds: 300
+
+  # ============================================================
+  # CIRCUIT BREAKER STATE VISIBILITY
+  # ============================================================
+  circuit_breaker_visibility:
+    exposed_to_agents: false
+    exposed_to_monitoring: true
+    monitoring_endpoint: "internal://circuit-breaker/state"
+    note: "Circuit breaker state is surfaced only to monitoring/agent_observability.py, never to the agent model"
+
+anomaly_detection:
+  alert_on:
+    - blocked_soql_dml_attempt: 1       # any DML attempt → immediate P1 alert
+    - repeated_denied_requests: 5       # 5 denials in 1 min → alert
+    - rate_limit_exceeded: 1            # any rate limit breach → alert
+    - circuit_breaker_opened: 1         # circuit opens → alert
+    - large_run_operation_without_approval: 1  # → P1 alert

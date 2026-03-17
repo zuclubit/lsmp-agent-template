@@ -1,0 +1,118 @@
+skill:
+  name: documentation
+  version: "2.0.0"
+  description: >
+    Generates and updates technical documentation: post-migration runbooks, field
+    mapping tables, architecture decision records (ADRs), API reference docs,
+    and changelog entries. Writes only to approved documentation paths. Never
+    exposes credentials, PII, or raw Salesforce IDs in generated output.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - code
+    - schemas
+    - api_specs
+    - runbooks
+    - migration_reports_anonymized
+    - field_metadata
+  forbidden_patterns:
+    - "(?i)password\\s*[:=]\\s*['\"]?[^\\s'\"]{4,}"
+    - "sk-ant-[A-Za-z0-9]+"
+    - "AKIA[0-9A-Z]{16}"
+    - "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----"
+    - "(?i)ssn[:=\\s]+\\d{3}-\\d{2}-\\d{4}"
+    - "(?i)credit.?card[:=\\s]+\\d{13,19}"
+  redaction_rules:
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "AKIA[0-9A-Z]{16}"
+      replacement: "[REDACTED_AWS_KEY]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+    - pattern: "(?i)(password|passwd|secret)\\s*[:=]\\s*['\"]?[^\\s'\"]{4,}['\"]?"
+      replacement: "[REDACTED_CREDENTIAL]"
+
+write_path_enforcement:
+  write_allowed_paths:
+    - docs/
+    - monitoring/runbooks/
+    - architecture/decisions/
+  write_forbidden_paths:
+    - /etc/
+    - /var/secrets/
+    - agents/
+    - security/
+    - ".env"
+    - "*.pem"
+    - "*.key"
+
+input_schema:
+  type: object
+  required:
+    - doc_type
+    - subject
+  properties:
+    doc_type:
+      type: string
+      enum: [runbook, field_mapping, adr, api_reference, changelog, report]
+    subject:
+      type: string
+      maxLength: 500
+    source_artifacts:
+      type: array
+      items:
+        type: string
+        pattern: "^(docs|monitoring|architecture|agents|src|migration)/"
+      maxItems: 20
+    output_path:
+      type: string
+      pattern: "^(docs|monitoring/runbooks|architecture/decisions)/"
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 1000
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*[:=]\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET)"
+    action: BLOCK
+  - name: no_raw_salesforce_ids
+    pattern: "\\b[a-zA-Z0-9]{15,18}\\b(?=.*Salesforce)"
+    action: REDACT
+
+rate_limits:
+  calls_per_minute: 15
+  max_input_size_kb: 100
+  max_output_size_kb: 1000
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

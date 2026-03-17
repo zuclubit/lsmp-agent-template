@@ -1,0 +1,127 @@
+mcp_server:
+  name: memory-server
+  version: "1.0.0"
+  transport: stdio
+  port: null  # stdio, not TCP
+  description: "In-session scoped memory store — working context, intermediate results, and checkpoint data per agent per session"
+  classification: RESTRICTED
+
+authentication:
+  required: true
+  method: session_token  # short-lived token issued at session start, scoped to tenant_id + session_id
+  token_source: session_bootstrap  # injected by orchestrator at session initialisation
+  token_validation: strict
+  token_scope_enforcement: true  # token carries tenant_id + session_id claims — validated on every operation
+
+# CRITICAL: no cross-tenant reads under any circumstances
+tenant_isolation:
+  enforce_tenant_id: true
+  enforce_session_id: true
+  cross_tenant_reads: FORBIDDEN
+  cross_tenant_writes: FORBIDDEN
+  cross_session_reads: FORBIDDEN  # except shared orchestrator context (read-only, same session)
+
+capabilities:
+  read: true
+  write: true
+  delete: true  # for TTL-expired entries only — managed by server, not agents
+  list_keys: true
+  inspect_other_agent_memory: false  # agents cannot enumerate or read other agents' WORKING entries
+  cross_agent_write: false           # agents cannot write into another agent's memory scope
+
+storage:
+  backend: in_memory  # ephemeral — never persisted to disk
+  encryption_at_rest: AES-256-GCM
+  encryption_key_source: session_derived  # key derived from session_token using HKDF — unique per session
+  max_capacity_per_session_mb: 10
+  max_entries_per_agent: 200
+  max_value_size_kb: 512
+
+ttl:
+  default_ttl_seconds: null         # inherits session TTL unless overridden
+  post_session_grace_seconds: 30    # memory survives 30s after session end, then auto-purged
+  max_entry_ttl_seconds: 7200       # no entry may outlive its session by more than 2h absolute cap
+  ttl_enforcement: mandatory        # TTL cannot be disabled or extended beyond session_duration + 30s
+  purge_on_session_end: true
+
+memory_entry_types:
+  WORKING:
+    description: "Agent's own working memory — readable and writable by the owning agent only"
+    scope: agent_private
+    access:
+      owner: read_write
+      other_agents: DENIED
+      orchestrator: read_only  # orchestrator may read for synthesis
+
+  SHARED:
+    description: "Read-only context shared across all agents in the session — written only by orchestrator"
+    scope: session_shared
+    access:
+      orchestrator: read_write
+      all_agents: read_only
+    examples:
+      - "run_id, tenant_id, phase"
+      - "validation_gate_result (BLOCKED|APPROVED)"
+      - "human_approval_token_status"
+
+  RESTRICTED:
+    description: "Sensitive operational data — readable only by orchestrator, requires justification"
+    scope: orchestrator_private
+    access:
+      orchestrator: read_write
+      all_other_agents: DENIED
+    examples:
+      - "circuit_breaker_state"
+      - "approval_token (presence flag only — never value)"
+
+forbidden_content:
+  # Server-side content scanner rejects writes containing these patterns
+  patterns:
+    - description: "Raw PII — email addresses"
+      pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
+      action: REJECT_WRITE
+      replacement: "[EMAIL_REDACTED]"
+
+    - description: "Raw PII — phone numbers"
+      pattern: "\\+?[1-9]\\d{9,14}"
+      action: REJECT_WRITE
+
+    - description: "Credentials and tokens"
+      pattern: "(password|token|secret|api_key|private_key)\\s*[=:]\\s*['\"]?[A-Za-z0-9+/=\\-_]{8,}"
+      action: REJECT_WRITE
+      severity: CRITICAL
+
+    - description: "Salesforce session tokens"
+      pattern: "00D[A-Za-z0-9]{12,}![A-Za-z0-9._-]{20,}"
+      action: REJECT_WRITE
+      severity: CRITICAL
+
+    - description: "Vault paths with values"
+      pattern: "vault://[\\w/]+\\s*[=:]\\s*\\S+"
+      action: REJECT_WRITE
+
+    - description: "Private keys"
+      pattern: "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"
+      action: REJECT_WRITE
+      severity: CRITICAL
+
+    - description: "AWS-style access keys"
+      pattern: "(AKIA|ASIA|AROA)[A-Z0-9]{16}"
+      action: REJECT_WRITE
+      severity: CRITICAL
+
+rate_limiting:
+  reads_per_agent_per_minute: 120
+  writes_per_agent_per_minute: 60
+  deletes_per_agent_per_minute: 20  # agents cannot delete; only TTL expiry triggers deletes
+
+audit:
+  log_all_writes: true
+  log_all_deletes: true
+  log_rejected_writes: true
+  log_agent_identity: true
+  log_session_id: true
+  log_tenant_id: true
+  log_read_access: false  # reads not logged by default — reduce noise
+  log_cross_agent_read_attempts: true  # any attempt to read another agent's WORKING memory → alert
+  sink: audit_logger  # security/audit/audit_logger.py

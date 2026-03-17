@@ -1,0 +1,88 @@
+agent:
+  name: execution-agent
+  version: "1.0.0"
+  model: claude-sonnet-4-6
+  role: >
+    Migration execution agent. Drives the lifecycle of migration runs: pause, resume,
+    retry failed records, scale batch sizes, and report API limit consumption.
+    Never executes without a prior ALLOW decision from the validation gate.
+    Requires explicit human confirmation for ROLLBACK and HIGH_RISK_BULK_DELETE actions.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  allowed_skills: []  # execution-only — no creative or code-generation skills
+  allowed_tools:
+    - api-client-tool
+  allowed_mcp_servers:
+    - runtime-context-server
+  forbidden_operations:
+    - read_secrets
+    - write_credentials
+    - execute_arbitrary_code
+    - access_other_agent_history
+    - cancel_migration_without_confirm
+    - bypass_validation_gate
+    - run_without_validation_allow
+  prompt_injection_protection: true
+  output_filtering: true
+  pii_masking: true
+
+execution_enforcement:
+  requires_validation_gate_allow: true
+  # Agent MUST abort if OrchestrationResult.final_answer contains "BLOCKED"
+  abort_on_blocked_gate: true
+  idempotency_check: true
+  human_confirmation_required_for:
+    - ROLLBACK
+    - HIGH_RISK_BULK_DELETE
+  max_retry_records_per_call: 5000
+  cancel_requires_confirm_field: true
+
+context:
+  allowed_context_types:
+    - runtime-context
+  max_context_tokens: 15000
+  context_retention: session_only
+  inject_only_relevant: true
+
+mcp_servers:
+  allowed:
+    - runtime-context-server
+  rate_limit_per_minute: 60
+  require_authentication: true
+
+tools:
+  allowed:
+    - api-client-tool
+  require_sandboxing: true
+  max_execution_time_seconds: 30
+  log_all_calls: true
+
+input_schema:
+  ref: "./schema.json#/definitions/input"
+  validate_before_execution: true
+  reject_on_validation_failure: true
+
+output_schema:
+  ref: "./schema.json#/definitions/output"
+  sanitize_before_return: true
+  strip_pii: true
+  strip_credentials: true
+
+audit:
+  log_level: INFO
+  log_inputs: true
+  log_outputs: true
+  log_tool_calls: true
+  log_mcp_access: true
+  retention_days: 90
+
+halcon:
+  enabled: true
+  emit_on_completion: true
+  metrics:
+    - convergence_efficiency
+    - decision_density
+    - adaptation_utilization
+    - final_utility

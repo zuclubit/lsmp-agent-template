@@ -1,0 +1,85 @@
+agent:
+  name: planning-agent
+  version: "1.0.0"
+  model: claude-sonnet-4-6
+  role: >
+    Pure-reasoning agent that produces structured MigrationPlan JSON objects.
+    Consumes project context and schema definitions to output execution blueprints.
+    Makes no API calls and invokes no tools — output is restricted to MigrationPlan JSON only.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  allowed_skills:
+    - code-generation
+    - documentation
+  allowed_tools: []  # no tool calls — pure reasoning agent
+  allowed_mcp_servers:
+    - project-context-server
+    - documentation-server
+  forbidden_operations:
+    - read_secrets
+    - write_credentials
+    - execute_arbitrary_code
+    - access_other_agent_history
+    - make_api_calls
+    - read_production_data
+  prompt_injection_protection: true
+  output_filtering: true
+  pii_masking: true
+
+context:
+  allowed_context_types:
+    - project-context
+  max_context_tokens: 20000
+  context_retention: session_only
+  inject_only_relevant: true
+
+mcp_servers:
+  allowed:
+    - project-context-server
+    - documentation-server
+  rate_limit_per_minute: 20
+  require_authentication: true
+
+tools:
+  allowed: []
+  require_sandboxing: true
+  max_execution_time_seconds: 30
+  log_all_calls: true
+
+output_constraints:
+  output_only: MigrationPlan
+  allowed_output_formats:
+    - application/json
+  output_schema_ref: "./schema.json#/definitions/MigrationPlan"
+  reject_free_text_responses: true
+  reject_code_execution_proposals: true
+
+input_schema:
+  ref: "./schema.json#/definitions/input"
+  validate_before_execution: true
+  reject_on_validation_failure: true
+
+output_schema:
+  ref: "./schema.json#/definitions/output"
+  sanitize_before_return: true
+  strip_pii: true
+  strip_credentials: true
+
+audit:
+  log_level: INFO
+  log_inputs: true
+  log_outputs: true
+  log_tool_calls: true
+  log_mcp_access: true
+  retention_days: 90
+
+halcon:
+  enabled: true
+  emit_on_completion: true
+  metrics:
+    - convergence_efficiency
+    - decision_density
+    - adaptation_utilization
+    - final_utility

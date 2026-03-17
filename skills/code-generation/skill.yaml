@@ -1,0 +1,121 @@
+skill:
+  name: code-generation
+  version: "2.0.0"
+  description: >
+    Generates Python/YAML/JSON source code for migration pipelines, Salesforce
+    integration adapters, and agent tools. Output is restricted to approved
+    destination paths. Never generates code that writes to arbitrary file paths,
+    executes shell commands, or imports unsafe modules.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - source_code
+    - schemas
+    - config_templates
+  forbidden_patterns:
+    - "exec\\("
+    - "eval\\("
+    - "__import__"
+    - "subprocess\\.call"
+    - "subprocess\\.Popen"
+    - "subprocess\\.run"
+    - "os\\.system"
+    - "os\\.popen"
+    - "open\\(.*['\"]w['\"]"
+    - "open\\(.*['\"]a['\"]"
+    - "shutil\\.rmtree"
+    - "pathlib.*\\.unlink"
+    - "ctypes"
+    - "importlib\\.import_module"
+  redaction_rules:
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "AKIA[0-9A-Z]{16}"
+      replacement: "[REDACTED_AWS_KEY]"
+    - pattern: "(?i)(password|passwd|secret|token|api_key)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+      replacement: "[REDACTED_CREDENTIAL]"
+    - pattern: "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----"
+      replacement: "[REDACTED_PRIVATE_KEY]"
+
+output_path_enforcement:
+  write_allowed_paths:
+    - src/
+    - migration/
+    - agents/
+  write_forbidden_paths:
+    - /etc/
+    - /var/secrets/
+    - .env
+    - "*.pem"
+    - "*.key"
+
+input_schema:
+  type: object
+  required:
+    - task_description
+    - target_language
+  properties:
+    task_description:
+      type: string
+      maxLength: 2000
+    target_language:
+      type: string
+      enum: [python, yaml, json, bash]
+    context_files:
+      type: array
+      items:
+        type: string
+      maxItems: 10
+    output_path:
+      type: string
+      pattern: "^(src|migration|agents)/"
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 500
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET|EXEC\\s*\\(|EXECUTE\\s+)"
+    action: BLOCK
+  - name: no_unsafe_imports
+    pattern: "(?i)(import\\s+os|import\\s+subprocess|import\\s+ctypes|from\\s+os\\s+import)"
+    action: BLOCK
+  - name: no_arbitrary_file_writes
+    pattern: "open\\(.*['\"]w['\"]"
+    action: BLOCK
+
+rate_limits:
+  calls_per_minute: 10
+  max_input_size_kb: 50
+  max_output_size_kb: 500
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

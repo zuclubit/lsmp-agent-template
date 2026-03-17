@@ -1,0 +1,447 @@
+version: "1.0.0"
+description: >
+  Structured audit log configuration for all agents in the migration platform.
+  Governs log format, sinks, HMAC tamper-detection chain, retention policy,
+  PII handling, and anomaly detection triggers.
+  Read by: security/audit/audit_logger.py, monitoring/agent_observability.py
+schema_version: "audit/v2"
+last_updated: "2026-03-17"
+
+# ---------------------------------------------------------------------------
+# Log Format
+# ---------------------------------------------------------------------------
+log_format:
+  encoding: json
+  newline_delimited: true  # JSONL — one event per line
+  charset: utf-8
+
+  required_fields:
+    - name: event_id
+      type: string
+      format: uuid-v4
+      description: "Unique identifier for this audit event"
+
+    - name: trace_id
+      type: string
+      format: hex-128bit
+      description: "OpenTelemetry W3C trace ID for distributed tracing correlation"
+      required_in: [production, staging]
+      fallback: "generate-uuid-if-missing"
+
+    - name: span_id
+      type: string
+      format: hex-64bit
+      description: "OpenTelemetry span ID"
+
+    - name: agent_name
+      type: string
+      enum:
+        - orchestrator-agent
+        - planning-agent
+        - validation-agent
+        - security-agent
+        - execution-agent
+        - debugging-agent
+        - documentation-agent
+        - SYSTEM
+      description: "Agent that generated this audit event"
+
+    - name: timestamp_utc
+      type: string
+      format: iso-8601
+      example: "2026-03-17T14:30:00.123456Z"
+      description: "Event timestamp in UTC — never use local time"
+
+    - name: action
+      type: string
+      description: >
+        The action performed. Use AuditEventType enum values:
+        auth.login.success, migration.started, security.alert, etc.
+
+    - name: input_hash
+      type: string
+      format: sha256-hex
+      description: >
+        SHA-256 hash of the raw agent input (prompt or tool argument).
+        Never log the raw input — log the hash only for audit traceability.
+
+    - name: output_summary
+      type: string
+      max_length: 500
+      description: >
+        Short human-readable summary of the agent output or tool result.
+        Must be sanitized by OutputSanitizer before logging — never raw output.
+
+    - name: tool_calls
+      type: array
+      items:
+        type: object
+        properties:
+          tool_name: { type: string }
+          arguments_hash: { type: string, format: sha256-hex }
+          result_summary: { type: string, max_length: 200 }
+          duration_ms: { type: integer }
+          is_error: { type: boolean }
+          error_code: { type: string, nullable: true }
+      description: "Ordered list of tool calls made during this agent turn"
+
+    - name: gate_decisions
+      type: array
+      items:
+        type: object
+        properties:
+          gate_name: { type: string }
+          decision: { type: string, enum: [PASS, BLOCK, ESCALATE_TO_HUMAN, WARN] }
+          condition_evaluated: { type: string }
+          reason: { type: string }
+          timestamp_utc: { type: string, format: iso-8601 }
+      description: "All gate evaluations performed in this agent session"
+
+    - name: duration_ms
+      type: integer
+      description: "Total wall-clock duration of the agent turn in milliseconds"
+
+    - name: tokens_used
+      type: object
+      properties:
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        total_tokens: { type: integer }
+      description: "Token consumption for this agent turn (from Anthropic API response)"
+
+    - name: session_id
+      type: string
+      format: uuid-v4
+      description: "Orchestration session ID — groups all events in one migration run"
+
+    - name: tenant_id
+      type: string
+      description: "Tenant identifier — required for multi-tenant isolation auditing"
+
+    - name: actor_id
+      type: string
+      description: "Identity that triggered this agent invocation (service account or human)"
+
+    - name: environment
+      type: string
+      enum: [production, staging, development, ci]
+
+    - name: sequence_number
+      type: integer
+      description: "Monotonically increasing within a session — used by HMAC chain"
+
+    - name: previous_event_hash
+      type: string
+      format: hmac-sha256-hex
+      description: "HMAC-SHA256 of the previous event — enables tamper detection chain"
+
+    - name: event_hash
+      type: string
+      format: hmac-sha256-hex
+      description: "HMAC-SHA256 of this event (excluding event_hash field)"
+
+  optional_fields:
+    - name: migration_id
+      type: string
+    - name: run_id
+      type: string
+    - name: workflow_name
+      type: string
+    - name: phase
+      type: string
+    - name: error_code
+      type: string
+    - name: error_message
+      type: string
+      note: "Error messages must be sanitized — no raw exception tracebacks with PII"
+    - name: data_classification
+      type: string
+      enum: [Public, Internal, Confidential, Restricted, CUI, PII, PHI]
+    - name: records_affected
+      type: integer
+    - name: halcon_session_id
+      type: string
+
+# ---------------------------------------------------------------------------
+# Log Sinks
+# ---------------------------------------------------------------------------
+sinks:
+
+  local_jsonl:
+    enabled: true
+    type: file
+    path: "${AUDIT_LOG_PATH:/var/log/migration-platform/audit.jsonl}"
+    rotation:
+      strategy: size_and_time
+      max_size_mb: 100
+      rotate_daily: true
+      compress_after_rotation: true
+      compression: gzip
+    buffering:
+      enabled: true
+      flush_interval_seconds: 5
+      max_buffer_events: 500
+    permissions:
+      owner: migration-service
+      group: audit-readers
+      mode: "0640"
+
+  splunk_hec:
+    enabled: true
+    type: splunk_hec
+    endpoint: "${SPLUNK_HEC_URL}"
+    token_env_var: SPLUNK_HEC_TOKEN   # injected from Vault Agent — never hardcoded
+    index: migration-platform-audit
+    sourcetype: migration:agent:audit
+    source: "migration-platform/${ENVIRONMENT}"
+    batch_size: 100
+    flush_interval_seconds: 10
+    timeout_seconds: 30
+    retry:
+      max_attempts: 3
+      backoff_seconds: [2, 10, 30]
+    tls:
+      verify: true
+      min_version: "TLS1.2"
+    on_failure:
+      action: fallback_to_local
+      alert_channel: pagerduty
+      alert_message: "Splunk HEC sink unavailable — audit events falling back to local JSONL only"
+
+# ---------------------------------------------------------------------------
+# HMAC Tamper-Detection Chain
+# ---------------------------------------------------------------------------
+hmac_chain:
+  enabled: true
+  algorithm: HMAC-SHA256
+  key_source: vault
+  vault_path: "secret/migration-platform/audit-chain-key"
+  key_rotation_days: 90
+  key_env_fallback: AUDIT_CHAIN_KEY_HEX  # for non-Vault environments (dev/CI)
+
+  chain_fields:
+    - sequence_number
+    - timestamp_utc
+    - action
+    - actor_id
+    - event_id
+    - previous_event_hash
+
+  verification:
+    on_startup: verify_last_100_events
+    continuous: false   # verification is done by the independent audit replay tool
+    replay_tool: "scripts/verify_audit_chain.py"
+
+  integrity_failure_action: ALERT_AND_QUARANTINE
+  integrity_alert_channel: pagerduty
+  note: >
+    The chain key must never be stored in the audit log itself.
+    An independent auditor can replay the log and verify the chain
+    using the same key from Vault, confirming no events were deleted
+    or modified after the fact.
+
+# ---------------------------------------------------------------------------
+# Retention Policy
+# ---------------------------------------------------------------------------
+retention:
+  hot_storage:
+    duration_days: 90
+    storage_type: local_disk_and_splunk
+    index_for_search: true
+
+  cold_archive:
+    duration_years: 7
+    storage_type: s3_glacier
+    bucket: "${AUDIT_ARCHIVE_BUCKET}"
+    encryption: AES-256-SSE-S3
+    immutable: true   # object lock — no deletion or overwrite
+    transition_after_days: 90
+
+  deletion:
+    automatic: false
+    requires_dual_authorization: true
+    notification_to: [ciso, compliance-team]
+    audit_the_deletion: true  # deleting audit logs is itself audited
+    note: "SOX compliance requires 7-year retention. Deletion before 7 years requires CISO approval."
+
+# ---------------------------------------------------------------------------
+# PII Policy
+# ---------------------------------------------------------------------------
+pii_policy:
+  raw_pii_in_logs: FORBIDDEN
+  allowed_in_logs:
+    - sha256_hash_of_pii_field
+    - pii_type_label   # e.g., "EMAIL_REDACTED", "SSN_REDACTED"
+    - record_count
+    - field_name_without_value
+
+  redaction_rules_ref: "security/redaction_rules.yaml"
+  apply_redaction_before_logging: true
+  redaction_layer: "validation/layer.py OutputSanitizer"
+
+  pii_fields_never_log:
+    - email
+    - phone
+    - ssn
+    - date_of_birth
+    - credit_card
+    - bank_account
+    - full_name   # log name_hash instead
+    - address
+    - ip_address  # log ip_prefix (first two octets) only
+
+  classification_logging:
+    log_data_classification_label: true
+    log_record_count: true
+    never_log_record_values: true
+
+# ---------------------------------------------------------------------------
+# Anomaly Detection Triggers
+# ---------------------------------------------------------------------------
+anomaly_detection:
+  description: >
+    These triggers fire alerting when suspicious patterns are detected in the
+    audit log stream. They are evaluated by the log processing pipeline (Splunk
+    or a local anomaly detector daemon).
+
+  triggers:
+    - id: AD-001
+      name: excessive_tool_calls
+      description: "Agent is making an unusually high number of tool calls per session"
+      condition: "tool_calls_count > 10 per session"
+      threshold: 10
+      window: per_session
+      action: ALERT
+      severity: WARNING
+      channel: slack-security-channel
+      note: "CLAUDE.md rule: max 10 agent invocations per orchestration run"
+
+    - id: AD-002
+      name: repeated_block_decisions
+      description: "Multiple BLOCK gate decisions in a short window — may indicate attack or misconfiguration"
+      condition: "gate_decisions[decision=BLOCK].count > 3 per hour"
+      threshold: 3
+      window: 3600_seconds
+      action: ALERT
+      severity: HIGH
+      channel: pagerduty
+      create_incident: true
+      incident_severity: P2
+
+    - id: AD-003
+      name: restricted_context_access_without_approval
+      description: "Agent accessed CUI/PHI/PII-classified context without an approval record"
+      condition: "data_classification IN [CUI, PHI, PII] AND human_approval_event missing in session"
+      action: ALERT_AND_FLAG
+      severity: CRITICAL
+      channel: [pagerduty, slack-security-channel, splunk]
+      create_incident: true
+      incident_severity: P1
+
+    - id: AD-004
+      name: circuit_breaker_open_event
+      description: "Circuit breaker opened — agent is experiencing repeated failures"
+      condition: "circuit_breaker_state == OPEN"
+      action: ALERT
+      severity: HIGH
+      channel: pagerduty
+      create_incident: true
+      incident_severity: P2
+
+    - id: AD-005
+      name: cancel_migration_without_confirmation
+      description: "cancel_migration tool called without confirm:true flag in arguments"
+      condition: "tool_name == cancel_migration AND arguments.confirm != true"
+      action: BLOCK_AND_ALERT
+      severity: CRITICAL
+      channel: [pagerduty, slack-security-channel]
+      create_incident: true
+      incident_severity: P1
+      note: "CLAUDE.md critical rule #1"
+
+    - id: AD-006
+      name: token_budget_approaching
+      description: "Session approaching 150K token limit — context summarization required"
+      condition: "tokens_used.total_tokens > 150000"
+      action: WARN_AGENT
+      severity: WARNING
+      channel: slack-migration-oncall
+      note: "CLAUDE.md rule #8: max 200K tokens per session, summarize at 150K"
+
+    - id: AD-007
+      name: agent_self_invocation_attempt
+      description: "Orchestrator attempted to invoke itself — blocked by permissions.yaml"
+      condition: "agent_name == orchestrator-agent AND target_agent == orchestrator-agent"
+      action: BLOCK_AND_ALERT
+      severity: CRITICAL
+      channel: [pagerduty, slack-security-channel]
+
+    - id: AD-008
+      name: tool_error_silently_ignored
+      description: "Tool returned error payload but is_error was not set — legacy bug pattern"
+      condition: "tool_result contains 'error' key AND is_error == false"
+      action: ALERT
+      severity: HIGH
+      channel: slack-security-channel
+      note: "CLAUDE.md rule #6 and Known Issue #4"
+
+    - id: AD-009
+      name: fabricated_halcon_metrics
+      description: "Halcon retrospective emitted with suspiciously uniform metric values (likely hardcoded)"
+      condition: >
+        halcon_metrics.final_utility == 0.95 AND halcon_metrics.convergence_efficiency == 0.95
+      action: ALERT_AND_FLAG
+      severity: HIGH
+      channel: slack-security-channel
+      note: "CLAUDE.md rule #7 and Known Issue #3 — metrics must be computed, not hardcoded"
+
+    - id: AD-010
+      name: large_migration_no_human_approval
+      description: "Execution-agent invoked for >1M records without recorded human approval"
+      condition: "agent_name == execution-agent AND records_affected > 1000000 AND human_approval_event missing"
+      action: BLOCK_AND_ALERT
+      severity: CRITICAL
+      channel: [pagerduty, slack-migration-oncall]
+      create_incident: true
+      incident_severity: P1
+      note: "CLAUDE.md rule #10"
+
+# ---------------------------------------------------------------------------
+# Structured Log Example (for reference / schema testing)
+# ---------------------------------------------------------------------------
+example_event:
+  event_id: "550e8400-e29b-41d4-a716-446655440000"
+  trace_id: "4bf92f3577b34da6a3ce929d0e0e4736"
+  span_id: "00f067aa0ba902b7"
+  agent_name: "orchestrator-agent"
+  timestamp_utc: "2026-03-17T14:30:00.123456Z"
+  action: "migration.started"
+  input_hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  output_summary: "Delegated pre-validation to validation-agent for migration run-abc-123"
+  tool_calls:
+    - tool_name: "delegate_to_validation_agent"
+      arguments_hash: "abc123def456..."
+      result_summary: "validation-agent returned grade=A, score=0.97"
+      duration_ms: 12450
+      is_error: false
+      error_code: null
+  gate_decisions:
+    - gate_name: "gate1_source_completeness"
+      decision: "PASS"
+      condition_evaluated: "validation_report.gate1_passed == true AND source_record_count > 0"
+      reason: "gate1_passed=true, source_record_count=4200000"
+      timestamp_utc: "2026-03-17T14:30:12.500000Z"
+  duration_ms: 14200
+  tokens_used:
+    input_tokens: 2048
+    output_tokens: 512
+    total_tokens: 2560
+  session_id: "sess-20260317-abc123"
+  tenant_id: "tenant-gov-001"
+  actor_id: "svc-migration-orchestrator"
+  environment: "production"
+  sequence_number: 42
+  previous_event_hash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+  event_hash: "2c624232cdd221771294dfbb310acbc8..."
+  migration_id: "run-abc-123"
+  data_classification: "CUI"

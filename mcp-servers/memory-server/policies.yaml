@@ -1,0 +1,179 @@
+access_policies:
+  default: DENY
+
+  # ============================================================
+  # ISOLATION PRINCIPLE
+  # Each agent may only read/write its own WORKING memory.
+  # SHARED memory is read-only for non-orchestrator agents.
+  # RESTRICTED memory is orchestrator-only.
+  # Cross-agent memory injection is FORBIDDEN without exception.
+  # ============================================================
+
+  isolation_rules:
+    - id: "MEM-ISO-001"
+      description: "Each agent may read and write its own WORKING memory entries"
+      principal: "{agent_id}"
+      scope: "session:{session_id}:agent:{agent_id}:WORKING"
+      operations: [read, write, list_keys]
+      condition: "token.agent_id == scope.agent_id AND token.session_id == scope.session_id AND token.tenant_id == scope.tenant_id"
+      effect: ALLOW
+
+    - id: "MEM-ISO-002"
+      description: "No agent may read another agent's WORKING memory"
+      principal: "*"
+      scope: "session:{session_id}:agent:{other_agent_id}:WORKING"
+      operations: [read, write, list_keys]
+      condition: "token.agent_id != scope.agent_id"
+      effect: DENY
+      priority: 1
+
+    - id: "MEM-ISO-003"
+      description: "Cross-agent memory write injection is unconditionally FORBIDDEN"
+      principal: "*"
+      scope: "session:{session_id}:agent:{any_agent_id}:*"
+      operations: [write]
+      condition: "token.agent_id != scope.agent_id"
+      effect: DENY
+      priority: 1
+      severity: CRITICAL
+      note: "This is the primary prompt-injection defence at the memory layer — an agent writing into another agent's context is treated as an attack"
+
+    - id: "MEM-ISO-004"
+      description: "Orchestrator may read all agents' WORKING memory (synthesis gate)"
+      principal: orchestrator-agent
+      scope: "session:{session_id}:agent:*:WORKING"
+      operations: [read, list_keys]
+      condition: "token.agent_id == orchestrator-agent AND token.session_id == scope.session_id"
+      effect: ALLOW
+
+  # ============================================================
+  # SHARED MEMORY RULES
+  # ============================================================
+  shared_memory_rules:
+    - id: "MEM-SHARED-001"
+      description: "Orchestrator may write SHARED context entries visible to all session agents"
+      principal: orchestrator-agent
+      scope: "session:{session_id}:SHARED"
+      operations: [read, write, list_keys]
+      condition: "token.agent_id == orchestrator-agent AND token.session_id == scope.session_id"
+      effect: ALLOW
+
+    - id: "MEM-SHARED-002"
+      description: "All agents in the session may read SHARED context — read-only"
+      principal: "*"
+      scope: "session:{session_id}:SHARED"
+      operations: [read, list_keys]
+      condition: "token.session_id == scope.session_id"
+      effect: ALLOW
+
+    - id: "MEM-SHARED-003"
+      description: "Non-orchestrator agents may not write SHARED memory"
+      principal: "*"
+      scope: "session:{session_id}:SHARED"
+      operations: [write, delete]
+      condition: "token.agent_id != orchestrator-agent"
+      effect: DENY
+      priority: 1
+
+  # ============================================================
+  # RESTRICTED MEMORY RULES
+  # ============================================================
+  restricted_memory_rules:
+    - id: "MEM-RESTR-001"
+      description: "Only orchestrator-agent may access RESTRICTED memory"
+      principal: orchestrator-agent
+      scope: "session:{session_id}:RESTRICTED"
+      operations: [read, write, list_keys]
+      condition: "token.agent_id == orchestrator-agent AND token.session_id == scope.session_id"
+      effect: ALLOW
+
+    - id: "MEM-RESTR-002"
+      description: "All non-orchestrator agents are denied RESTRICTED memory access"
+      principal: "*"
+      scope: "session:{session_id}:RESTRICTED"
+      operations: [read, write, list_keys]
+      condition: "token.agent_id != orchestrator-agent"
+      effect: DENY
+      priority: 1
+
+  # ============================================================
+  # TTL ENFORCEMENT
+  # ============================================================
+  ttl_rules:
+    - id: "MEM-TTL-001"
+      description: "TTL enforcement is mandatory — no agent may extend TTL beyond session_duration + 30s"
+      principal: "*"
+      operations: [set_ttl]
+      condition: "requested_ttl > session.remaining_seconds + 30"
+      effect: DENY
+      priority: 1
+      note: "Entries with expired TTL are automatically purged by the server — agents cannot prevent this"
+
+    - id: "MEM-TTL-002"
+      description: "On session termination, all memory for the session is immediately scheduled for purge"
+      trigger: session_end
+      action: schedule_purge
+      grace_period_seconds: 30
+      purge_scope: "session:{session_id}:*"
+
+  # ============================================================
+  # WRITE CONTENT ENFORCEMENT
+  # ============================================================
+  write_content_rules:
+    - id: "MEM-CONTENT-001"
+      description: "Server rejects any write containing raw PII patterns"
+      operations: [write]
+      content_checks:
+        - email_pattern: true
+        - phone_pattern: true
+        - ssn_pattern: true
+      action: REJECT_WRITE
+      error_message: "Write rejected: potential PII detected. Redact before storing."
+
+    - id: "MEM-CONTENT-002"
+      description: "Server blocks writes containing credentials or secret values"
+      operations: [write]
+      content_checks:
+        - credential_pattern: true
+        - sf_token_pattern: true
+        - vault_value_pattern: true
+        - private_key_pattern: true
+        - aws_key_pattern: true
+      action: REJECT_WRITE
+      severity: CRITICAL
+      error_message: "Write blocked: credential pattern detected. Credentials must never be stored in session memory."
+
+  # ============================================================
+  # AUDIT REQUIREMENTS
+  # ============================================================
+  audit_rules:
+    - id: "MEM-AUDIT-001"
+      description: "All WRITE operations are audit logged with agent identity, session_id, and tenant_id"
+      operations: [write]
+      log: true
+      include_fields: [agent_id, session_id, tenant_id, entry_key, entry_type, timestamp_utc]
+
+    - id: "MEM-AUDIT-002"
+      description: "All rejected writes are logged with reason — content never logged (may be sensitive)"
+      operations: [write]
+      condition: "result == REJECTED"
+      log: true
+      include_fields: [agent_id, session_id, rejection_reason, timestamp_utc]
+      exclude_fields: [entry_value]  # never log rejected value — it may contain the very secret we blocked
+
+    - id: "MEM-AUDIT-003"
+      description: "Any attempt to read another agent's WORKING memory triggers an immediate security alert"
+      operations: [read, list_keys]
+      condition: "token.agent_id != scope.agent_id AND scope.type == WORKING"
+      log: true
+      alert: true
+      alert_channel: security-team
+      alert_severity: HIGH
+      include_fields: [agent_id, attempted_scope, session_id, tenant_id, timestamp_utc]
+
+anomaly_detection:
+  alert_on:
+    - cross_agent_write_attempt: 1         # any attempt → immediate CRITICAL alert
+    - repeated_rejected_writes_same_agent: 3  # 3 content rejections in 1 min → alert
+    - cross_tenant_access_attempt: 1       # any attempt → immediate CRITICAL alert
+    - ttl_override_attempt: 1              # attempt to bypass TTL → alert

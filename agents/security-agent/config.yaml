@@ -1,0 +1,125 @@
+agent:
+  name: security-agent
+  version: "1.0.0"
+  model: claude-sonnet-4-6
+  role: >
+    Security scanning agent. Performs OWASP scanning, secrets detection, CVE checks,
+    SOQL injection analysis, PII handling review, and TLS configuration audits across
+    project source files. Only reads files within whitelisted paths under PROJECT_ROOT.
+    Never writes files. Blocks the pipeline on any CRITICAL or HIGH finding.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  allowed_skills:
+    - security-audit
+  allowed_tools:
+    - file-system-tool
+  allowed_mcp_servers:
+    - security-context-server
+    - filesystem-server
+  forbidden_operations:
+    - read_secrets
+    - write_credentials
+    - execute_arbitrary_code
+    - access_other_agent_history
+    - write_files
+    - access_paths_outside_project_root
+  prompt_injection_protection: true
+  output_filtering: true
+  pii_masking: true
+
+path_enforcement:
+  path_whitelist_enforced: true
+  allowed_read_paths:
+    - agents/
+    - integrations/
+    - security/
+    - monitoring/
+    - migration/
+    - tools/
+    - skills/
+    - config/
+  forbidden_path_patterns:
+    - "*.env"
+    - "*.pem"
+    - "*.key"
+    - ".aws/*"
+    - ".ssh/*"
+    - "/etc/*"
+    - "/var/secrets/*"
+    - "/run/secrets/*"
+  path_traversal_check: strict  # canonical path must remain under PROJECT_ROOT
+
+soql_enforcement:
+  soql_select_only: true
+  blocked_soql_keywords:
+    - DELETE
+    - UPDATE
+    - INSERT
+    - DROP
+    - CREATE
+    - MERGE
+    - GRANT
+
+secrets_detection:
+  entropy_threshold: 4.5
+  patterns:
+    - "sk-ant-[A-Za-z0-9]+"
+    - "AKIA[0-9A-Z]{16}"
+    - "-----BEGIN (RSA|EC|OPENSSH) PRIVATE KEY-----"
+    - "[A-Za-z0-9+/]{40,}={0,2}"
+
+gate_policy:
+  pass_security_gate_requires: critical_count == 0 AND high_count == 0
+  auto_block_on_critical: true
+  auto_block_on_high: true
+
+context:
+  allowed_context_types:
+    - project-context
+  max_context_tokens: 20000
+  context_retention: session_only
+  inject_only_relevant: true
+
+mcp_servers:
+  allowed:
+    - security-context-server
+    - filesystem-server
+  rate_limit_per_minute: 10
+  require_authentication: true
+
+tools:
+  allowed:
+    - file-system-tool
+  require_sandboxing: true
+  max_execution_time_seconds: 30
+  log_all_calls: true
+
+input_schema:
+  ref: "./schema.json#/definitions/input"
+  validate_before_execution: true
+  reject_on_validation_failure: true
+
+output_schema:
+  ref: "./schema.json#/definitions/output"
+  sanitize_before_return: true
+  strip_pii: true
+  strip_credentials: true
+
+audit:
+  log_level: INFO
+  log_inputs: true
+  log_outputs: true
+  log_tool_calls: true
+  log_mcp_access: true
+  retention_days: 90
+
+halcon:
+  enabled: true
+  emit_on_completion: true
+  metrics:
+    - convergence_efficiency
+    - decision_density
+    - adaptation_utilization
+    - final_utility

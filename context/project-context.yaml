@@ -1,0 +1,61 @@
+context:
+  name: project-context
+  version: "1.0.0"
+  classification: INTERNAL
+  description: "Static project knowledge — architecture, schemas, runbooks"
+
+allowed_agents:
+  - orchestrator-agent
+  - planning-agent
+  - security-agent
+  - debugging-agent
+  # NOT: execution-agent (doesn't need project knowledge)
+  # NOT: validation-agent (uses runtime context only)
+
+data_sources:
+  - source: architecture/
+    classification: INTERNAL
+    include: ["*.md", "decisions/ADR-*.md"]
+    exclude: []
+    max_tokens: 5000
+
+  - source: docs/
+    classification: INTERNAL
+    include: ["*.md", "api/openapi.yaml"]
+    exclude: ["**/credentials*"]
+    max_tokens: 8000
+
+  - source: config/agents.yaml
+    classification: INTERNAL
+    include: all
+    exclude: []
+    max_tokens: 2000
+
+  - source: agents/_shared/schemas.py
+    classification: INTERNAL
+    include: all
+    max_tokens: 3000
+
+filtering_rules:
+  - rule: strip_credentials
+    pattern: "(password|token|secret|api_key|private_key)\\s*[=:]\\s*\\S+"
+    action: REDACT
+    replacement: "[FILTERED]"
+
+  - rule: strip_vault_paths
+    pattern: "vault://[\\w/]+"
+    action: REDACT
+
+  - rule: strip_env_values
+    pattern: "\\$\\{[A-Z_]+\\}"
+    action: KEEP  # env var placeholders are OK, actual values are not
+
+retention_policy:
+  scope: session_only
+  persist_across_sessions: false
+  max_age_seconds: 3600
+
+audit:
+  log_context_loads: true
+  log_agent_access: true
+  log_token_count: true

@@ -1,0 +1,109 @@
+access_policies:
+  default: DENY
+  rules:
+    # --- READ ACCESS ---
+    - id: "DOC-001"
+      description: "All agents can read documentation — public docs"
+      principal: "*"
+      paths: ["./docs/"]
+      operations: [search_docs, get_runbook, list_docs]
+      condition: "resource.classification == PUBLIC"
+      effect: ALLOW
+
+    - id: "DOC-002"
+      description: "All agents can read runbooks and ADRs (INTERNAL)"
+      principal: "*"
+      paths: ["./monitoring/runbooks/", "./architecture/decisions/"]
+      operations: [get_runbook, get_adr, list_docs, search_docs]
+      condition: "request.agent_clearance >= INTERNAL"
+      effect: ALLOW
+
+    # --- INDEX REFRESH ---
+    - id: "DOC-003"
+      description: "Only documentation-agent may trigger index refresh"
+      principal: documentation-agent
+      paths: ["*"]
+      operations: [trigger_index_refresh]
+      condition: "request.session.active == true"
+      effect: ALLOW
+
+    - id: "DOC-004"
+      description: "Block index refresh for all other agents"
+      principal: "*"
+      paths: ["*"]
+      operations: [trigger_index_refresh]
+      condition: "request.principal != documentation-agent"
+      effect: DENY
+      priority: 1
+
+    # --- WRITE / DELETE — ABSOLUTE DENY ---
+    - id: "DOC-005"
+      description: "Block ALL write operations for all agents, no exceptions"
+      principal: "*"
+      paths: ["*"]
+      operations: [write_file, create_file, delete_file, update_file, overwrite_file, append_file]
+      condition: null
+      effect: DENY
+      priority: 1
+
+    # --- SENSITIVE PATH BLOCKS ---
+    - id: "DOC-006"
+      description: "Block any file path containing sensitive keywords"
+      principal: "*"
+      path_pattern_deny:
+        - "**/*secret*"
+        - "**/*password*"
+        - "**/*token*"
+        - "**/*credential*"
+        - "**/*private*"
+        - "**/*.key"
+        - "**/*.pem"
+        - "**/.claude/"
+        - "./security/secrets/"
+        - "./config/environments/prod*"
+      operations: ["*"]
+      condition: null
+      effect: DENY
+      priority: 1
+
+agent_permissions:
+  orchestrator-agent:
+    allowed_operations: [search_docs, get_runbook, get_adr, list_docs]
+    path_scope: ["./docs/", "./monitoring/runbooks/", "./architecture/decisions/"]
+    max_tokens_per_request: 8000
+
+  planning-agent:
+    allowed_operations: [search_docs, get_runbook, get_adr, list_docs]
+    path_scope: ["./docs/", "./architecture/decisions/"]
+    max_tokens_per_request: 8000
+
+  documentation-agent:
+    allowed_operations: [search_docs, get_runbook, get_adr, list_docs, trigger_index_refresh]
+    path_scope: ["./docs/", "./monitoring/runbooks/", "./architecture/decisions/"]
+    max_tokens_per_request: 16000  # larger budget for doc generation tasks
+
+  security-agent:
+    allowed_operations: [search_docs, get_runbook, list_docs]
+    path_scope: ["./docs/", "./monitoring/runbooks/"]
+    max_tokens_per_request: 8000
+
+  debugging-agent:
+    allowed_operations: [search_docs, get_runbook, list_docs]
+    path_scope: ["./docs/", "./monitoring/runbooks/"]
+    max_tokens_per_request: 8000
+
+  validation-agent:
+    allowed_operations: [search_docs, list_docs]
+    path_scope: ["./docs/api/"]
+    max_tokens_per_request: 4000
+
+  execution-agent:
+    # execution-agent does not need documentation access
+    allowed_operations: []
+    path_scope: []
+
+anomaly_detection:
+  alert_on:
+    - repeated_denied_access_same_agent: 3  # 3 denials in 1 min → alert
+    - access_to_forbidden_path: 1           # any attempt → immediate alert
+    - high_volume_search: 30               # >30 search queries/min → review

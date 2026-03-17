@@ -1,0 +1,105 @@
+mcp_server:
+  name: documentation-server
+  version: "1.0.0"
+  transport: stdio
+  port: null  # stdio, not TCP
+  description: "Read-only documentation search and retrieval — keyword-indexed access to docs, runbooks, and ADRs"
+  classification: INTERNAL
+
+authentication:
+  required: true
+  method: spiffe_svid  # mTLS via SPIRE — same trust root as filesystem-server
+  token_validation: strict
+  # No authentication tokens are ever returned in responses or exposed in error messages
+
+capabilities:
+  search_docs: true
+  get_runbook: true
+  get_adr: true
+  list_docs: true
+  write: false
+  delete: false
+  index_refresh: false  # only documentation-agent may trigger via out-of-band mechanism
+
+indexing:
+  engine: keyword  # lightweight keyword index — no vector DB dependency
+  index_paths:
+    - "./docs/"
+    - "./monitoring/runbooks/"
+    - "./architecture/decisions/"
+  index_file_types: [".md", ".yaml", ".txt", ".rst"]
+  rebuild_on_startup: true
+  incremental_rebuild: true
+  rebuild_interval_seconds: 3600
+  max_index_size_mb: 200
+  index_storage: "./.doc-index/"  # transient, never committed to VCS
+
+allowed_paths:
+  - path: "./docs/"
+    access: read_only
+    classification: PUBLIC
+    include: ["*.md", "api/openapi.yaml", "api/*.yaml"]
+  - path: "./monitoring/runbooks/"
+    access: read_only
+    classification: INTERNAL
+    include: ["*.md"]
+  - path: "./architecture/decisions/"
+    access: read_only
+    classification: INTERNAL
+    include: ["ADR-*.md"]
+
+forbidden_paths:
+  - "./security/secrets/"
+  - "./config/environments/prod*"
+  - ".env*"
+  - "**/*password*"
+  - "**/*token*"
+  - "**/*secret*"
+  - "**/*credential*"
+  - "**/*.key"
+  - "**/*.pem"
+  - "**/.claude/"
+
+operations:
+  search_docs:
+    description: "Full-text keyword search across indexed documentation"
+    params:
+      query: string  # required
+      limit: integer  # default 10, max 50
+      path_filter: string  # optional glob to narrow scope
+    returns: [title, path, snippet, classification]
+    never_returns: [raw_content_block, auth_details]
+
+  get_runbook:
+    description: "Retrieve a specific runbook by name or path"
+    params:
+      name: string
+    returns: [title, content, last_updated, classification]
+    max_content_tokens: 8000
+
+  get_adr:
+    description: "Retrieve an Architecture Decision Record by ID or title"
+    params:
+      id: string  # e.g., ADR-0012
+    returns: [id, title, status, context, decision, consequences, last_updated]
+    max_content_tokens: 4000
+
+  list_docs:
+    description: "List available documents in a given path"
+    params:
+      path: string  # must be within allowed_paths
+      recursive: boolean  # default false
+    returns: [name, path, classification, last_modified]
+
+rate_limiting:
+  requests_per_minute: 100
+  requests_per_agent_per_minute: 30
+  burst_limit: 20
+  search_queries_per_minute: 40  # search is more expensive than fetch
+
+audit:
+  log_all_reads: true
+  log_search_queries: true
+  log_denied_access: true
+  log_agent_identity: true
+  sink: audit_logger  # security/audit/audit_logger.py

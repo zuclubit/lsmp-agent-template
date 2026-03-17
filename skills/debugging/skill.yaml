@@ -1,0 +1,117 @@
+skill:
+  name: debugging
+  version: "2.0.0"
+  description: >
+    Analyses migration run logs, Prometheus metrics, pod status, and Kafka consumer lag
+    to identify root causes of errors and performance degradation. All data sources are
+    read-only. Never mutates run state, never issues write queries, never modifies
+    configuration. Produces a structured DiagnosticReport JSON.
+  classification: INTERNAL
+
+security:
+  default_policy: DENY
+  input_validation: strict
+  output_sanitization: mandatory
+  allowed_data_scope:
+    - logs
+    - metrics
+    - pod_status
+    - kafka_lag
+    - migration_error_reports
+  forbidden_patterns:
+    - "DROP\\s+TABLE"
+    - "DELETE\\s+FROM"
+    - "UPDATE\\s+\\w+\\s+SET"
+    - "INSERT\\s+INTO"
+    - "TRUNCATE\\s+TABLE"
+    - "ALTER\\s+TABLE"
+    - "EXEC\\s*\\("
+    - "eval\\("
+    - "os\\.system"
+  redaction_rules:
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "Bearer [A-Za-z0-9._\\-]+"
+      replacement: "Bearer [REDACTED_TOKEN]"
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+
+read_only_enforcement:
+  read_only_data_sources: true
+  allowed_query_types:
+    - SELECT
+    - EXPLAIN
+  blocked_query_types:
+    - INSERT
+    - UPDATE
+    - DELETE
+    - DROP
+    - CREATE
+    - MERGE
+    - GRANT
+
+input_schema:
+  type: object
+  required:
+    - run_id
+    - issue_description
+  properties:
+    run_id:
+      type: string
+      pattern: "^run-[a-z0-9\\-]+$"
+      maxLength: 64
+    issue_description:
+      type: string
+      maxLength: 1000
+    object_type:
+      type: string
+      enum: [Account, Contact, Opportunity, Case, Lead, Custom]
+    time_window_minutes:
+      type: integer
+      minimum: 1
+      maximum: 1440
+  forbidden_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - private_key
+    - ssn
+    - credit_card
+
+output_schema:
+  type: object
+  sanitize: true
+  strip_fields:
+    - password
+    - token
+    - secret
+    - api_key
+    - credentials
+  max_output_size_kb: 200
+
+validation_rules:
+  - name: no_credential_exposure
+    pattern: "(?i)(password|secret|api_key|token)\\s*=\\s*['\"][^'\"]{4,}['\"]"
+    action: BLOCK
+  - name: no_pii_in_output
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+  - name: no_sql_injection
+    pattern: "(?i)(DROP\\s+TABLE|DELETE\\s+FROM|INSERT\\s+INTO|UPDATE\\s+\\w+\\s+SET)"
+    action: BLOCK
+  - name: no_mutation_commands
+    pattern: "(?i)(pause_migration|cancel_migration|resume_migration|retry_failed_records|scale_batch_size)"
+    action: BLOCK
+
+rate_limits:
+  calls_per_minute: 20
+  max_input_size_kb: 20
+  max_output_size_kb: 200
+
+audit:
+  log_invocations: true
+  log_inputs_hash: true
+  log_outputs_summary: true

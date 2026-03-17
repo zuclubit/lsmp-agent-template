@@ -1,0 +1,64 @@
+context:
+  name: runtime-context
+  version: "1.0.0"
+  classification: RESTRICTED
+  description: "Live migration run state — job status, metrics, error reports"
+
+allowed_agents:
+  - orchestrator-agent
+  - validation-agent
+  - execution-agent
+  - debugging-agent
+
+data_sources:
+  - source: migration_api
+    endpoint: GET /api/v1/migrations/{job_id}
+    classification: RESTRICTED
+    fields_allowed: [status, progress_percentage, processed_records, total_records, error_count, updated_at, phase]
+    fields_forbidden: [raw_record_data, pii_fields, customer_data, sf_token]
+    max_tokens: 3000
+
+  - source: prometheus_metrics
+    queries:
+      - migration_records_failed_total{job_id="{job_id}"}
+      - migration_throughput_records_per_second{job_id="{job_id}"}
+      - kafka_consumer_lag_records{consumer_group="migration-loader-{job_id}"}
+      - salesforce_api_daily_limit_remaining{tenant_id="{tenant_id}"}
+    classification: INTERNAL
+    max_tokens: 1000
+
+  - source: error_report
+    endpoint: GET /api/v1/migrations/{job_id}/errors
+    classification: RESTRICTED
+    max_records: 20  # never inject all errors — sample only
+    fields_allowed: [error_code, error_category, record_count, sample_record_id]
+    fields_forbidden: [raw_record_content, pii_values, full_stack_trace]
+    pii_masking: true
+    max_tokens: 2000
+
+filtering_rules:
+  - rule: mask_sf_record_ids
+    pattern: "00[A-Za-z0-9]{13,16}"
+    action: PARTIAL_MASK
+    replacement: "00***{last4}"
+
+  - rule: strip_raw_pii
+    pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+    action: REDACT
+    replacement: "[EMAIL_REDACTED]"
+
+  - rule: strip_phone_numbers
+    pattern: "\\+?[1-9]\\d{9,14}"
+    action: REDACT
+    replacement: "[PHONE_REDACTED]"
+
+retention_policy:
+  scope: session_only
+  persist_across_sessions: false
+  max_age_seconds: 1800  # 30 min — refresh from source
+  refresh_interval_seconds: 300
+
+audit:
+  log_context_loads: true
+  log_filtered_fields: true
+  log_pii_redactions_count: true  # count only, never log what was redacted

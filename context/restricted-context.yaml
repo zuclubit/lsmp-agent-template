@@ -1,0 +1,51 @@
+context:
+  name: restricted-context
+  version: "1.0.0"
+  classification: RESTRICTED
+  description: "Sensitive operational data — only for authorized agents with explicit need-to-know"
+
+allowed_agents:
+  - orchestrator-agent  # only with explicit human approval for high-risk ops
+
+# All other agents: DENIED
+
+data_sources:
+  - source: vault_secret_names_only  # NAMES only — never values
+    classification: RESTRICTED
+    fields_allowed: [secret_name, secret_path, last_rotated_at, ttl_remaining]
+    fields_forbidden: [secret_value, credentials, token, key]
+    note: "Vault Agent injects actual values at pod startup — never via context"
+
+  - source: spire_svid_status
+    classification: RESTRICTED
+    fields_allowed: [svid_expiry, ttl_remaining_seconds, spiffe_id]
+    fields_forbidden: [private_key, certificate_chain]
+
+access_requirements:
+  require_human_approval: true
+  approval_ttl_seconds: 300  # approval expires in 5 minutes
+  audit_every_access: true
+  require_justification: true
+
+filtering_rules:
+  - rule: absolute_block_credentials
+    pattern: "(password|secret|token|key|credential)\\s*[=:]\\s*['\"]?[A-Za-z0-9+/=\\-_]{8,}"
+    action: BLOCK  # not redact — BLOCK the entire context load
+    severity: CRITICAL
+
+  - rule: block_private_keys
+    pattern: "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----"
+    action: BLOCK
+    severity: CRITICAL
+
+retention_policy:
+  scope: single_request_only
+  persist: false
+  max_age_seconds: 60  # purged after 60 seconds
+
+audit:
+  log_every_access: true
+  log_approver_identity: true
+  log_justification: true
+  alert_on_access: true  # every access to restricted context generates an alert
+  alert_channel: security-team

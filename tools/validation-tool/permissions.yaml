@@ -1,0 +1,134 @@
+tool:
+  name: validation-tool
+  version: "1.0.0"
+  classification: INTERNAL
+  description: >
+    Data validation tool for the validation-agent. Executes read-only SELECT
+    queries against the Salesforce Bulk API and the internal migration database
+    to measure record counts, field completeness, referential integrity, and
+    duplicate rates. All database operations are SELECT-only; all SOQL operations
+    are SELECT-only. No data mutations are permitted under any circumstances.
+
+access_control:
+  default_policy: DENY
+  allowed_agents:
+    - validation-agent   # ONLY the validation-agent may invoke this tool
+  require_authentication: true
+  require_audit_log: true
+
+network:
+  network_access: true
+  allowed_endpoints:
+    - description: Salesforce Bulk API 2.0
+      pattern: "https://*.salesforce.com/services/data/*/jobs/query*"
+      methods: [GET, POST]   # POST needed to create query jobs; GET to poll results
+    - description: Internal migration database (read-only replica)
+      pattern: "jdbc:postgresql://migration-db-ro.platform-db.svc.cluster.local:5432/migration"
+      operations: [SELECT]
+    - description: Migration control-plane API (read-only endpoints)
+      pattern: "http://api.migration.internal/api/v1/migrations/runs/*/errors"
+      methods: [GET]
+  tls_verification: strict
+  min_tls_version: "1.2"
+
+database_enforcement:
+  db_operations: SELECT_ONLY
+  soql_operations: SELECT_ONLY
+  soql_required_clauses:
+    - LIMIT   # Every SOQL query must include a LIMIT clause
+  blocked_soql_keywords:
+    - DELETE
+    - UPDATE
+    - INSERT
+    - MERGE
+    - DROP
+    - CREATE
+    - GRANT
+    - TRUNCATE
+    - UPSERT
+  blocked_sql_keywords:
+    - DELETE
+    - UPDATE
+    - INSERT
+    - DROP
+    - CREATE
+    - GRANT
+    - TRUNCATE
+    - ALTER
+    - EXEC
+    - EXECUTE
+
+sandboxing:
+  enabled: true
+  network_access: true
+  filesystem_access: none
+  max_memory_mb: 512
+  max_execution_time_seconds: 30
+  allowed_system_calls:
+    - read
+    - write
+    - socket
+    - connect
+    - close
+    - poll
+    - epoll_wait
+    - sendto
+    - recvfrom
+    - getsockopt
+    - setsockopt
+
+input_validation:
+  schema_validation: strict
+  max_payload_size_kb: 512
+  forbidden_patterns:
+    - "DROP\\s+TABLE"
+    - "DELETE\\s+FROM"
+    - "INSERT\\s+INTO"
+    - "UPDATE\\s+\\w+\\s+SET"
+    - "EXEC\\s*\\("
+    - "eval\\("
+    - "__import__"
+    - "MERGE\\s+INTO"
+    - "GRANT\\s+"
+    - "TRUNCATE\\s+TABLE"
+    - "ALTER\\s+TABLE"
+    - "UPSERT\\s+"
+  sanitize_before_execution: true
+
+output_sanitization:
+  strip_credentials: true
+  strip_pii: true
+  max_output_size_kb: 256
+  redact_patterns:
+    - pattern: "[A-Za-z0-9+/]{40,}"
+      replacement: "[REDACTED_SECRET]"
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+    - pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+      replacement: "[REDACTED_SSN]"
+    - pattern: "\\b\\d{13,19}\\b"
+      replacement: "[REDACTED_CARD_NUMBER]"
+    # Replace raw Salesforce IDs in output with masked versions
+    - pattern: "\\b[a-zA-Z0-9]{15,18}\\b"
+      replacement: "[MASKED_SF_ID]"
+
+rate_limiting:
+  calls_per_minute: 60
+  calls_per_agent_per_minute: 60   # Only one agent can call it
+  burst_limit: 15
+
+audit:
+  log_all_calls: true
+  log_caller_agent: true
+  log_input_hash: true
+  log_output_summary: true
+  log_execution_time: true
+  alert_on_anomaly: true
+  log_query_hashes: true          # Hash of each SQL/SOQL query for audit trail
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 3
+  reset_timeout_seconds: 60

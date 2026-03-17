@@ -1,0 +1,47 @@
+access_policies:
+  default: DENY
+  rules:
+    - id: "FS-001"
+      description: "Security agent read access to source code"
+      principal: security-agent
+      paths: ["./agents/", "./migration/", "./integrations/", "./security/"]
+      operations: [read_file, list_directory, search_files]
+      condition: "request.classification <= INTERNAL"
+      effect: ALLOW
+
+    - id: "FS-002"
+      description: "Documentation agent read access to docs only"
+      principal: documentation-agent
+      paths: ["./docs/", "./monitoring/runbooks/", "./architecture/decisions/"]
+      operations: [read_file, list_directory]
+      condition: null
+      effect: ALLOW
+
+    - id: "FS-003"
+      description: "Block ALL write operations"
+      principal: "*"
+      paths: ["*"]
+      operations: [write_file, delete_file, create_file, chmod, chown]
+      condition: null
+      effect: DENY
+      priority: 1  # highest priority — always applied
+
+    - id: "FS-004"
+      description: "Block access to secrets and credentials"
+      principal: "*"
+      paths: ["**/.env*", "**/secrets*", "**/*.pem", "**/*.key", "**/*.pfx", "**/vault_token", "**/.claude/"]
+      operations: ["*"]
+      condition: null
+      effect: DENY
+      priority: 1
+
+data_classification:
+  PUBLIC: ["./docs/api/", "./README.md"]
+  INTERNAL: ["./agents/", "./migration/", "./architecture/"]
+  RESTRICTED: ["./security/secrets/", "./.env*", "./config/environments/prod*"]
+
+anomaly_detection:
+  alert_on:
+    - multiple_denied_requests_same_agent: 5  # 5 denials in 1 min → alert
+    - access_to_forbidden_path: 1  # any attempt → immediate alert
+    - unusual_file_volume: 50  # reading >50 files/min → alert

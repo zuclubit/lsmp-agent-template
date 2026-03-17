@@ -1,0 +1,76 @@
+tool:
+  name: code-execution-tool
+  version: "1.0.0"
+  classification: INTERNAL
+  description: >
+    DISABLED — Code execution by AI agents is prohibited in this system.
+    Use specific, purpose-built API calls against the migration control-plane instead.
+    This tool exists only as an explicit deny entry to prevent any agent from
+    registering or invoking arbitrary code execution capabilities.
+
+disabled: true
+disabled_reason: >
+  Code execution by AI agents is prohibited. Arbitrary code execution introduces
+  unacceptable risk in a FedRAMP High environment processing federal CUI/PII/PHI.
+  All agent actions must be expressed as typed API calls to known, audited endpoints.
+  If a new capability is required, implement it as a named tool with explicit
+  access control, input validation, and audit logging — then update this file.
+
+access_control:
+  default_policy: DENY
+  allowed_agents: []   # NO agents are permitted to invoke this tool
+  require_authentication: true
+  require_audit_log: true
+
+sandboxing:
+  enabled: true
+  network_access: false
+  filesystem_access: none
+  max_memory_mb: 0
+  max_execution_time_seconds: 0
+  allowed_system_calls: []
+
+input_validation:
+  schema_validation: strict
+  max_payload_size_kb: 0
+  forbidden_patterns:
+    - "DROP\\s+TABLE"
+    - "DELETE\\s+FROM"
+    - "INSERT\\s+INTO"
+    - "UPDATE\\s+\\w+\\s+SET"
+    - "EXEC\\s*\\("
+    - "eval\\("
+    - "__import__"
+    - ".*"   # catch-all — all input is forbidden
+  sanitize_before_execution: true
+
+output_sanitization:
+  strip_credentials: true
+  strip_pii: true
+  max_output_size_kb: 0
+  redact_patterns:
+    - pattern: "[A-Za-z0-9+/]{40,}"
+      replacement: "[REDACTED_SECRET]"
+    - pattern: "sk-ant-[A-Za-z0-9]+"
+      replacement: "[REDACTED_API_KEY]"
+    - pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}\\b"
+      replacement: "[REDACTED_EMAIL]"
+
+rate_limiting:
+  calls_per_minute: 0
+  calls_per_agent_per_minute: 0
+  burst_limit: 0
+
+audit:
+  log_all_calls: true          # Log every attempt, even though all are denied
+  log_caller_agent: true
+  log_input_hash: true
+  log_output_summary: true
+  log_execution_time: true
+  alert_on_anomaly: true
+  alert_on_any_invocation: true   # Any attempt to call this tool triggers a security alert
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 1          # One failed attempt is enough to trigger the breaker
+  reset_timeout_seconds: 3600   # 1-hour lockout on any invocation attempt
